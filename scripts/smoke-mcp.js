@@ -26,6 +26,10 @@ try {
   }
   const providers = await client.callTool({ name: 'chat_providers', arguments: {} });
   assert.deepEqual(JSON.parse(providers.content[0].text).providers.map((p) => p.id), ['chatgpt', 'gemini']);
+  assert.ok(tools.tools.some((tool) => tool.name === 'chat_doctor'));
+  const doctor = await client.callTool({ name: 'chat_doctor', arguments: {} });
+  assert.ok(!doctor.isError);
+  assert.equal(JSON.parse(doctor.content[0].text).scope, 'local_only');
   for (const name of ["chatgpt_send_message", "chatgpt_status", "gemini_send_message", "gemini_get_latest_response", "gemini_status", "gemini_circuit_breaker_status"]) {
     assert.ok(tools.tools.some((tool) => tool.name === name), `Missing tool: ${name}`);
   }

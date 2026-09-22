@@ -4,6 +4,7 @@ import fs from 'node:fs/promises';
 import { createHash, randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import { acquireLock, readState, writeState, WebUIError } from '../shared/persistent-browser.js';
+import { recoveryFor } from './recovery.js';
 
 export const textHash = (text = '') => createHash('sha256').update(text.replace(/\s+/g, ' ').trim()).digest('hex');
 const fingerprint = (value) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
@@ -11,7 +12,17 @@ const terminal = new Set(['completed', 'cancelled', 'failed', 'abandoned']);
 export function canonicalURL(value) { const u = new URL(value); return u.origin + u.pathname.replace(/\/$/, ''); }
 export function taskView(task) {
   const { baseline, promptHash, requestHash, fingerprint, ...publicFields } = task;
-  return publicFields;
+  return { ...publicFields, recovery: recoveryFor(task) };
+}
+
+export function validateJournal(raw, id) {
+  const state = raw && typeof raw === 'object' && !Array.isArray(raw) && Object.keys(raw).length === 0 ? { version: 1, active: null, tasks: {} } : raw;
+  if (!state || state.version !== 1 || !state.tasks || typeof state.tasks !== 'object' || Array.isArray(state.tasks) ||
+      (state.active !== null && (typeof state.active !== 'string' || !state.tasks[state.active] || terminal.has(state.tasks[state.active].state))) ||
+      Object.entries(state.tasks).some(([key, task]) => !task || task.task_id !== key || task.provider !== id ||
+        !['preparing', 'submitting', 'submitted', 'running', 'uncertain', ...terminal].includes(task.state) ||
+        (!terminal.has(task.state) && state.active !== key))) throw new WebUIError('INVALID_JOURNAL', 'Unsupported or damaged task journal; nothing was sent.');
+  return state;
 }
 
 // One durable journal and lock per provider. No global lock: providers can run
@@ -36,12 +47,7 @@ export class TaskKernel {
     const release = await acquireLock(`${file}.lock`, { signal, timeout: 20000 });
     try {
       const raw = await readState(file);
-      const state = Object.keys(raw).length ? raw : { version: 1, active: null, tasks: {} };
-      if (state.version !== 1 || !state.tasks || typeof state.tasks !== 'object' || Array.isArray(state.tasks) ||
-          (state.active !== null && (typeof state.active !== 'string' || !state.tasks[state.active])) ||
-          Object.entries(state.tasks).some(([key, task]) => !task || task.task_id !== key || task.provider !== id ||
-            !['preparing', 'submitting', 'submitted', 'running', 'uncertain', ...terminal].includes(task.state) ||
-            (!terminal.has(task.state) && state.active !== key))) throw new WebUIError('INVALID_JOURNAL', 'Unsupported or damaged task journal; nothing was sent.');
+      const state = validateJournal(raw, id);
       const save = () => writeState(file, state);
       return await fn(state, save);
     } finally { await release(); }
@@ -168,9 +174,14 @@ export class TaskKernel {
       state.active = null; await save(); return taskView(task);
     }, signal);
   }
-  async list(id, limit = 20) {
-    return this.locked(id, async (state) => ({ provider: id, active_task: state.active, tasks: Object.values(state.tasks).sort((a, b) => b.created_at - a.created_at).slice(0, limit).map((task) => {
-      const view = taskView(task); delete view.response; return view;
-    }) }));
+  async list(id, limit = 20, { offset = 0, state: filter } = {}) {
+    if (!Number.isInteger(limit) || limit < 1 || limit > 100 || !Number.isInteger(offset) || offset < 0) throw new WebUIError('INVALID_PAGE', 'limit must be 1..100 and offset a nonnegative integer.');
+    if (filter && !['preparing', 'submitting', 'submitted', 'running', 'uncertain', ...terminal].includes(filter)) throw new WebUIError('INVALID_STATE', 'Unknown task state.');
+    return this.locked(id, async (state) => {
+      const tasks = Object.values(state.tasks).filter((task) => !filter || task.state === filter).sort((a, b) => b.created_at - a.created_at || a.task_id.localeCompare(b.task_id));
+      return { provider: id, active_task: state.active, total: tasks.length, offset, next_offset: offset + limit < tasks.length ? offset + limit : null, tasks: tasks.slice(offset, offset + limit).map((task) => {
+        const view = taskView(task); delete view.response; return view;
+      }) };
+    });
   }
 }

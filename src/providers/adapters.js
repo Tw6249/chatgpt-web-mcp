@@ -1,6 +1,7 @@
 import { SELECTORS as chatgptSelectors } from '../selectors.js';
 import { SELECTORS as geminiSelectors } from '../gemini/selectors.js';
 import { WebUIError } from '../shared/persistent-browser.js';
+import { CHROME_EXECUTABLE, BROWSER_STATE_FILE, RUNTIME_STATE_FILE, OPERATION_LOCK_FILE } from '../config.js';
 
 async function stop(browser, selectors) {
   const button = await browser.firstVisible?.(selectors, { timeout: 500 }) || await browser.first?.(selectors);
@@ -12,6 +13,7 @@ async function stop(browser, selectors) {
 export function geminiProvider(browser) {
   return {
     id: 'gemini', browser,
+    localConfig: browser.config,
     capabilities: { files: true, models: true, history: true, archive: 'loaded-messages', cancellation: true },
     isRoot: (url) => url === 'https://gemini.google.com/app',
     async prepare() {
@@ -36,6 +38,7 @@ export function geminiProvider(browser) {
 export function chatgptProvider(browser) {
   return {
     id: 'chatgpt', browser,
+    localConfig: { executable: CHROME_EXECUTABLE, browserState: BROWSER_STATE_FILE, runtimeState: RUNTIME_STATE_FILE, operationLock: OPERATION_LOCK_FILE },
     capabilities: { files: true, models: true, history: true, archive: 'provider-transcript', cancellation: true },
     isRoot: (url) => url === 'https://chatgpt.com',
     isProvisional: (url) => /^\/c\/WEB:[^/]+$/.test(decodeURIComponent(new URL(url).pathname)),

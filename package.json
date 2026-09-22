@@ -1,6 +1,6 @@
 {
   "name": "chatgpt-web-mcp",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "type": "module",
   "description": "A local MCP server for ChatGPT and Gemini web UIs with isolated persistent browser profiles.",
   "license": "MIT",
@@ -41,14 +41,15 @@
     ".env.example",
     "LICENSE",
     "docs/UNIFIED_TASKS.md",
-    "scripts/verify-unified.js"
+    "scripts/verify-unified.js",
+    "docs/MANAGEMENT.md"
   ],
   "scripts": {
     "start": "node src/index.js",
     "login": "node scripts/login.js",
     "login:gemini": "node src/cli.js login --provider gemini",
     "inspect": "node scripts/inspect.js",
-    "doctor": "node scripts/doctor.js",
+    "doctor": "node src/cli.js doctor",
     "smoke": "node scripts/smoke-mcp.js",
     "test": "node --test",
     "test:browser": "node --test integration/gemini.browser.js"

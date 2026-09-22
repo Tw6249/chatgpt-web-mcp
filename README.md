@@ -4,6 +4,18 @@
 
 [English](README.en.md)
 
+## 本地诊断与任务管理（0.5.0）
+
+新增 `chat_doctor`，统一检查两个平台的本地环境、锁和任务状态，报告不包含聊天内容、会话链接或本地路径。任务列表支持状态筛选和分页；任务结果附带具体恢复建议。共有 60 个 MCP 工具。
+
+```bash
+node src/cli.js doctor
+node src/cli.js tasks --provider all --state uncertain
+node src/cli.js result <task_id> --wait --timeout 30000
+```
+
+命令行还支持 `providers`、`cancel <task_id>` 和 `abandon <task_id> --confirm`，与 MCP 共用任务核心。诊断不会打开浏览器，也不代表登录或网页控件已验证。完整用法和退出码见 [管理与诊断文档](docs/MANAGEMENT.md)。
+
 ## 统一接口与持久化任务（0.4.0）
 
 新增 13 个通用 `chat_*` 工具，保留原有 46 个 `chatgpt_*` / `gemini_*` 工具。用 `provider: "chatgpt"` 或 `"gemini"` 选择平台：`chat_send` 接收稳定的 `request_id`，返回持久化 `task_id`；`chat_result` 可在 MCP 重启后恢复读取。同一请求编号不会重复发送，任务执行期间会阻止同平台旧接口切换页面。

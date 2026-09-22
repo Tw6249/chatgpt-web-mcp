@@ -2,6 +2,10 @@
 
 A fork of [Goudu666/chatgpt-web-mcp](https://github.com/Goudu666/chatgpt-web-mcp) with Gemini web support. The original MIT license and author attribution are preserved.
 
+## Local diagnostics and task management (0.5.0)
+
+`chat_doctor` adds redacted local diagnostics for both providers without opening a browser. Task listings support state filters and pagination; task views include actionable recovery guidance. The CLI now supports `providers`, `doctor`, `tasks`, `result`, `cancel` and confirmed `abandon`, sharing the MCP task core. There are 60 MCP tools. See [management commands, privacy and exit codes](docs/MANAGEMENT.md).
+
 ## Unified interfaces and durable tasks (0.4.0)
 
 Thirteen new `chat_*` tools share a provider-neutral coordinator while preserving all 46 legacy tools. `chat_send` accepts `provider` and a stable `request_id`; `chat_result` resumes by `task_id` after an MCP restart. Replays do not resend. Managed tasks prevent legacy tools from changing the same provider page until resolved. Task listing, verified cancellation and explicit recovery are included.
