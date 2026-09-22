@@ -1,6 +1,6 @@
 # ChatGPT & Gemini Web MCP
 
-A fork of [Goudu666/chatgpt-web-mcp](https://github.com/Goudu666/chatgpt-web-mcp) with Gemini web support. The original MIT license and author attribution are preserved.
+A unified MCP server for the ChatGPT and Gemini web interfaces, with multi-model comparisons, durable tasks, restart recovery, and local status management. Each provider uses a separate browser sign-in environment; no API key is required.
 
 ## Multi-model comparisons and managed installation (0.6.0)
 

@@ -1,6 +1,6 @@
 # ChatGPT & Gemini Web MCP
 
-基于 [Goudu666/chatgpt-web-mcp](https://github.com/Goudu666/chatgpt-web-mcp) 的扩展 fork，新增 Gemini 网页端支持；保留原 MIT 许可证与作者署名。
+通过 MCP 统一连接 ChatGPT 和 Gemini 网页端，支持同题多模型问答、持久化任务、重启恢复与本地状态管理。各平台使用独立的浏览器登录环境，无需配置 API Key。
 
 [English](README.en.md)
 
