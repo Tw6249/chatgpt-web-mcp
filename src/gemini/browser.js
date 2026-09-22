@@ -6,7 +6,9 @@ import { PersistentBrowser, WebUIError, acquireLock, readState, writeState, proc
 import { geminiConfig } from "./config.js";
 import { SELECTORS } from "./selectors.js";
 
-const hash = (value) => createHash("sha256").update(value.trim()).digest("hex");
+// Gemini renders prompt lines with layout whitespace different from Quill's
+// composer. Normalize only the acknowledgement hash; draft checks stay exact.
+const hash = (value) => createHash("sha256").update(value.replace(/\s+/g, " ").trim()).digest("hex");
 const normalize = (value) => value.replace(/\s+/g, " ").trim();
 
 export function conversationURL(value) {
@@ -90,6 +92,9 @@ export class GeminiBrowser {
       const latest = responses.at(-1);
       const answer = latest?.querySelector(s.answer);
       const composer = first(s.composer);
+      // Gemini includes a truncated screen-reader announcement inside
+      // .query-text. Read the actual lines, not that duplicate announcement.
+      const userLines = [...(users.at(-1)?.querySelectorAll('.query-text-line') || [])];
       return {
         url: location.href,
         signedIn: !!composer && !document.querySelector('a[href*="accounts.google.com/ServiceLogin"], a[href*="accounts.google.com/v3/signin"]') && ![...document.querySelectorAll('button, a')].some((e) => visible(e) && /^(Sign in|登录)$/i.test(e.innerText.trim())),
@@ -97,11 +102,11 @@ export class GeminiBrowser {
         draft: composer?.innerText || "",
         busy: !!first(s.stop),
         userCount: users.length, responseCount: responses.length,
-        lastUser: (users.at(-1)?.querySelector('.query-text') || users.at(-1))?.innerText?.trim() || "",
+        lastUser: userLines.length ? userLines.map((e) => e.innerText.trim()).join("\n") : (users.at(-1)?.querySelector('.query-text') || users.at(-1))?.innerText?.trim() || "",
         text: answer?.innerText?.trim() || "",
         completeControl: !!latest && [...latest.querySelectorAll(s.complete)].some(visible),
         alerts: [...document.querySelectorAll(s.alerts)].filter(visible).map((e) => e.innerText).join("\n"),
-        attachments: [...document.querySelectorAll(s.attachments)].filter(visible).map((e) => e.innerText),
+        attachments: [...document.querySelectorAll(s.attachments)].filter((e) => visible(e) && !e.closest('user-query, model-response') && !e.parentElement?.closest(s.attachments)).map((e) => e.innerText),
         model: first(s.model)?.innerText?.trim() || null,
       };
     }, SELECTORS);
@@ -216,13 +221,16 @@ export class GeminiBrowser {
       }));
     }
     const s = await this.snapshot();
-    return { provider: "gemini", url: s.url, text: s.text, complete: false, pending: true, timedOut: true, nextAction: "Call gemini_get_latest_response with wait=true. Do not resend." };
+    const pending = (await this.state()).pending;
+    return { provider: "gemini", url: s.url, text: pending && s.responseCount <= pending.responseCount ? "" : s.text, complete: false, pending: true, timedOut: true, nextAction: "Call gemini_get_latest_response with wait=true. Do not resend." };
   }
 
   async getLatestResponse({ wait = false, timeoutMs = this.config.responseTimeout } = {}) {
     if (wait && (await this.state()).pending) return this.waitForResponse({ timeoutMs });
     const s = await this.snapshot();
-    return { provider: "gemini", url: s.url, text: s.text, complete: !!s.text && !s.busy && s.completeControl && !(await this.state()).pending, pending: !!(await this.state()).pending, model: s.model };
+    const pending = (await this.state()).pending;
+    if (pending?.conversationURL && pending.conversationURL !== s.url) throw new WebUIError("CONVERSATION_CHANGED", "Gemini conversation changed; the pending send was preserved.");
+    return { provider: "gemini", url: s.url, text: pending && s.responseCount <= pending.responseCount ? "" : s.text, complete: !!s.text && !s.busy && s.completeControl && !pending, pending: !!pending, model: s.model };
   }
 
   async resolvePending({ confirmed }) {
@@ -253,8 +261,26 @@ export class GeminiBrowser {
     const page = await this.page();
     try {
       await page.locator(SELECTORS.models).first().waitFor({ state: "visible" });
-      return { models: await page.locator(SELECTORS.models).evaluateAll((items) => items.filter((e) => e.getClientRects().length).map((e) => ({ name: e.innerText.trim(), selected: e.getAttribute("aria-checked") === "true" || e.getAttribute("aria-selected") === "true", disabled: e.getAttribute("aria-disabled") === "true" }))) };
+      return { models: (await this.modelOptions()).map(({ target, ...value }) => value) };
     } finally { await page.keyboard.press("Escape"); }
+  }
+
+  async modelOptions() {
+    const page = await this.page();
+    const items = [];
+    for (const target of await page.locator(SELECTORS.models).all()) {
+      if (!await target.isVisible()) continue;
+      items.push({ target, ...await target.evaluate((e) => ({
+        mode: e.hasAttribute('data-mode-id'),
+        name: (e.querySelector('.label') || e).innerText.trim(),
+        description: e.querySelector('.sublabel')?.innerText.trim() || null,
+        selected: e.getAttribute('aria-checked') === 'true' || e.getAttribute('aria-selected') === 'true' || e.classList.contains('selected'),
+        disabled: e.getAttribute('aria-disabled') === 'true' || e.disabled === true,
+      })) });
+    }
+    // Current menus also contain an "Extended thinking" settings entry.
+    // Only actual mode rows have data-mode-id; do not treat settings as models.
+    return (items.some((item) => item.mode) ? items.filter((item) => item.mode) : items).map(({ mode, ...item }) => item);
   }
 
   async selectModel(model) {
@@ -264,14 +290,13 @@ export class GeminiBrowser {
     await button.click(); const page = await this.page();
     try {
       await page.locator(SELECTORS.models).first().waitFor({ state: "visible" });
-      const matches = [];
-      for (const item of await page.locator(SELECTORS.models).all()) {
-        if (await item.isVisible() && normalize(await item.innerText()) === normalize(model)) matches.push(item);
-      }
-      if (matches.length !== 1 || !await matches[0].isEnabled()) throw new WebUIError("MODEL_UNAVAILABLE", "Use one exact available name returned by gemini_list_models.");
-      await matches[0].click();
+      const matches = (await this.modelOptions()).filter((item) => normalize(item.name) === normalize(model));
+      if (matches.length !== 1 || matches[0].disabled || !await matches[0].target.isEnabled()) throw new WebUIError("MODEL_UNAVAILABLE", "Use one exact available name returned by gemini_list_models.");
+      await matches[0].target.click();
     } finally { await page.keyboard.press("Escape"); }
-    return this.status();
+    const checked = await this.listModels();
+    if (!checked.models.some((item) => normalize(item.name) === normalize(model) && item.selected)) throw new WebUIError("MODEL_NOT_CONFIRMED", "The model selection could not be confirmed from Gemini's menu.");
+    return { ...await this.status(), selectedModel: model, selectionVerified: true };
   }
 
   async listHistory({ query = "", limit = 20 } = {}) {
@@ -284,7 +309,16 @@ export class GeminiBrowser {
     const target = conversationURL(url);
     if (!/\/app\/.+/.test(target)) throw new WebUIError("INVALID_URL", "Specify an existing Gemini conversation URL.");
     await this.editable({ empty: true }); await this.throttle("change"); await this.editable({ empty: true });
-    await (await this.page()).goto(target, { waitUntil: "domcontentloaded" });
+    const page = await this.page();
+    await page.goto(target, { waitUntil: "domcontentloaded" });
+    // The composer mounts before history arrives. Do not report a selected
+    // conversation as ready while its last answer is still absent.
+    await page.waitForFunction((s) => {
+      const visible = (e) => e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden';
+      if (s.stop.some((selector) => [...document.querySelectorAll(selector)].some(visible))) return true;
+      const last = [...document.querySelectorAll(s.assistant)].at(-1);
+      return !!last?.querySelector(s.answer)?.innerText.trim() && [...last.querySelectorAll(s.complete)].some(visible);
+    }, SELECTORS, { timeout: this.config.actionTimeout });
     await this.update({ selectedURL: target });
     return this.status();
   }
@@ -315,14 +349,30 @@ export class GeminiBrowser {
         await input.setInputFiles(files);
       }
     } else await input.setInputFiles(files);
-    for (const file of files) await page.getByText(path.basename(file), { exact: false }).last().waitFor({ state: "visible" });
+    await this.waitForUploads(files);
     if (page.url() !== before) throw new WebUIError("CONVERSATION_CHANGED", "Conversation changed during upload; nothing was sent.");
     return { uploaded: files.map((file) => path.basename(file)), sent: false };
   }
 
+  async waitForUploads(files) {
+    const page = await this.page();
+    const names = files.map((file) => ({ full: path.basename(file), stem: path.basename(file, path.extname(file)) }));
+    await page.waitForFunction(({ selector, names }) => {
+      const previews = [...document.querySelectorAll(selector)].filter((e) => e.getClientRects().length && !e.closest('user-query, model-response'));
+      return names.every(({ full, stem }) => previews.some((e) => {
+        const text = e.querySelector('.gem-attachment-text')?.textContent.trim();
+        return text ? text === full || text === stem : e.innerText.trim().split('\n').some((line) => line.trim() === full);
+      })) && !previews.some((e) => e.querySelector('[role="progressbar"], [aria-busy="true"], mat-progress-spinner'));
+    }, { selector: SELECTORS.attachments, names }, { timeout: this.config.actionTimeout });
+  }
+
   async archiveConversation() {
     const page = await this.page(); const s = await this.snapshot(); await this.check(s);
-    const messages = await page.locator(`${SELECTORS.user}, ${SELECTORS.assistant}`).evaluateAll((items, selectors) => items.map((e) => ({ role: e.matches(selectors.user) ? "user" : "assistant", text: (e.querySelector(e.matches(selectors.user) ? '.query-text' : selectors.answer) || e).innerText.trim() })), SELECTORS);
+    const messages = await page.locator(`${SELECTORS.user}, ${SELECTORS.assistant}`).evaluateAll((items, selectors) => items.map((e) => {
+      const user = e.matches(selectors.user);
+      const lines = user ? [...e.querySelectorAll('.query-text-line')] : [];
+      return { role: user ? "user" : "assistant", text: lines.length ? lines.map((line) => line.innerText.trim()).join("\n") : (e.querySelector(user ? '.query-text' : selectors.answer) || e).innerText.trim() };
+    }), SELECTORS);
     if (!messages.length) throw new WebUIError("EMPTY_CONVERSATION", "No loaded Gemini messages to archive.");
     await fs.mkdir(this.config.archiveDir, { recursive: true });
     const file = path.join(this.config.archiveDir, `gemini-${new Date().toISOString().replace(/[:.]/g, "-")}-${randomUUID().slice(0, 8)}.md`);

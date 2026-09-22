@@ -5,7 +5,7 @@ Thanks for helping improve ChatGPT Web MCP. This project controls a user-authent
 ## Development setup
 
 ```bash
-git clone https://github.com/Goudu666/chatgpt-web-mcp.git
+git clone https://github.com/Tw6249/chatgpt-web-mcp.git
 cd chatgpt-web-mcp
 npm ci
 npm test

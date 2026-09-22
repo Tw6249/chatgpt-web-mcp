@@ -21,7 +21,7 @@ const fixtureHTML = `<!doctype html><html><body>
 <main id="messages"></main>
 <rich-textarea><div contenteditable="true" role="textbox" aria-label="Enter a prompt here"></div></rich-textarea>
 <button aria-label="Open mode picker" onclick="document.querySelector('#models').hidden=false">Fast</button>
-<div id="models" hidden><button role="menuitemradio" onclick="document.querySelector('[aria-label=\\'Open mode picker\\']').textContent='Thinking';this.parentElement.hidden=true">Thinking</button></div>
+<div id="models" hidden><button role="menuitem" data-mode-id="fixture-mode" onclick="document.querySelector('[aria-label=\\'Open mode picker\\']').textContent='Thinking';this.classList.add('selected');this.parentElement.hidden=true"><span class="label">Thinking</span><span class="sublabel">Advanced reasoning</span></button><button role="menuitem">Extended thinking</button></div>
 <input type="file" multiple onchange="for (const f of this.files) {const e=document.createElement('file-preview'); e.textContent=f.name; document.body.append(e)}">
 <button aria-label="Send message" onclick="send()">Send</button>
 <script>
@@ -30,7 +30,10 @@ document.addEventListener('keydown', e=>{if(e.key==='Escape')document.querySelec
 function send(){
  window.sendCount++;
  const input=document.querySelector('[contenteditable]');
- const query=document.createElement('user-query');const text=document.createElement('div');text.className='query-text';text.textContent=input.innerText.trim();query.append(text);messages.append(query);input.innerText='';
+ const query=document.createElement('user-query');const text=document.createElement('div');text.className='query-text';
+ const announcement=document.createElement('h5');announcement.className='screen-reader-user-query-label';announcement.textContent='You said '+input.innerText.slice(0,12)+'…';text.append(announcement);
+ for(const value of input.innerText.trim().split('\\n')){const line=document.createElement('p');line.className='query-text-line';line.textContent=' '+value+' ';text.append(line)}
+ query.append(text);messages.append(query);input.innerText='';
  document.querySelectorAll('file-preview').forEach(e=>e.remove());
  history.replaceState({},'', '/app/fixture');
  const response=document.createElement('model-response');response.innerHTML='<message-content><div class="markdown">Partial</div></message-content>';
@@ -55,7 +58,7 @@ async function fixture(t) {
 
 test("browser sends once, waits for final text and can continue the conversation", async (t) => {
   const { b, page } = await fixture(t);
-  const first = await b.runExclusive(() => b.sendMessage({ prompt: "Hello", timeoutMs: 10000 }));
+  const first = await b.runExclusive(() => b.sendMessage({ prompt: "Hello\n\n  indented line", timeoutMs: 10000 }));
   assert.equal(first.complete, true); assert.equal(first.text, "Fixture reply 1");
   const second = await b.runExclusive(() => b.sendMessage({ prompt: "Follow up", timeoutMs: 10000 }));
   assert.equal(second.text, "Fixture reply 2"); assert.equal(await page.evaluate(() => sendCount), 2);
@@ -94,12 +97,16 @@ test("upload menu waits for a file chooser and never sends the attachment", asyn
   const { b, page, directory } = await fixture(t);
   await page.locator('input[type="file"]').evaluate((e) => e.remove());
   await page.evaluate(() => {
-    const button = document.createElement('button'); button.setAttribute('aria-label', 'Upload files'); button.textContent = 'Upload';
+    const button = document.createElement('button'); button.setAttribute('aria-label', 'Upload & tools'); button.textContent = 'Upload';
     button.onclick = () => {
       const item = document.createElement('button'); item.setAttribute('role', 'menuitem'); item.textContent = 'Upload files';
       item.onclick = () => {
         const input = document.createElement('input'); input.type = 'file'; input.hidden = true;
-        input.onchange = () => { const preview = document.createElement('file-preview'); preview.textContent = input.files[0].name; document.body.append(preview); };
+        input.onchange = () => {
+          const preview = document.createElement('uploader-file-preview');
+          const label = document.createElement('span'); label.className = 'gem-attachment-text'; label.textContent = input.files[0].name.replace(/\.txt$/, ''); preview.append(label); document.body.append(preview);
+          const tooltip = document.createElement('div'); tooltip.hidden = true; tooltip.setAttribute('role', 'tooltip'); tooltip.textContent = input.files[0].name; document.body.append(tooltip);
+        };
         document.body.append(input); input.click();
       };
       document.body.append(item);
@@ -113,7 +120,10 @@ test("upload menu waits for a file chooser and never sends the attachment", asyn
 
 test("model listing, exact selection, visible history and scoped archive", async (t) => {
   const { b } = await fixture(t);
-  assert.equal((await b.listModels()).models[0].name, "Thinking");
+  const models = (await b.listModels()).models;
+  assert.equal(models.length, 1, 'Settings entries must not be offered as models');
+  assert.equal(models[0].name, "Thinking");
+  assert.equal(models[0].description, "Advanced reasoning");
   assert.equal((await b.selectModel("Thinking")).model, "Thinking");
   assert.equal((await b.listHistory()).conversations[0].title, "Previous chat");
   await b.sendMessage({ prompt: "Archive this", timeoutMs: 6000 });
@@ -121,6 +131,24 @@ test("model listing, exact selection, visible history and scoped archive", async
   assert.equal(archive.completeHistory, false);
   const text = await fs.readFile(archive.path, "utf8");
   assert.match(text, /Archive this/); assert.match(text, /Fixture reply/);
+  assert.doesNotMatch(text, /You said/, 'Exclude duplicated screen-reader announcements');
+});
+
+test("past conversation attachments do not count as current composer uploads", async (t) => {
+  const { b, page } = await fixture(t);
+  await page.evaluate(() => {
+    const old = document.createElement('user-query'); old.innerHTML = '<uploader-file-preview><span class="gem-attachment-text">past-file</span></uploader-file-preview>'; document.querySelector('#messages').append(old);
+  });
+  assert.equal((await b.snapshot()).attachments.length, 0);
+  await b.writePrompt('New prompt without old attachment');
+});
+
+test("opening history waits for the asynchronous transcript, not just the composer", async (t) => {
+  const { b, page } = await fixture(t);
+  await page.route('**/app/past', (route) => route.fulfill({ contentType: 'text/html', body: fixtureHTML + `<script>setTimeout(()=>{const e=document.createElement('model-response');e.innerHTML='<message-content><div class="markdown">Loaded history answer</div></message-content><div class="response-footer complete">Finished</div>';document.querySelector('#messages').append(e)},800)</script>` }));
+  await b.selectHistory('https://gemini.google.com/app/past');
+  const answer = await b.getLatestResponse();
+  assert.equal(answer.complete, true); assert.equal(answer.text, 'Loaded history answer');
 });
 
 test("logged-out UI and page limit errors prevent a send", async (t) => {

@@ -1,5 +1,7 @@
 # ChatGPT & Gemini Web MCP
 
+基于 [Goudu666/chatgpt-web-mcp](https://github.com/Goudu666/chatgpt-web-mcp) 的扩展 fork，新增 Gemini 网页端支持；保留原 MIT 许可证与作者署名。
+
 [English](README.en.md)
 
 ## Gemini 网页端支持（0.3.0）
@@ -61,6 +63,8 @@ Gemini 不复用 ChatGPT 的模型名称、Pro 探针或 40 轮自动轮换策�
 
 登录后可显式运行 `node scripts/verify-gemini.js --send`：通过 MCP 新建测试对话，发送两个不含私人信息的问题，验证回复完成、重连和上下文追问。不加 `--send` 时只检查状态；此脚本不进入 CI。
 
+增加 `--upload` 参数可验证附件：`node scripts/verify-gemini.js --send --upload`。脚本会创建一个仅含测试标记的临时文本文件，上传后让 Gemini 读出标记；不上传用户文档。实际网页验收结果见 [测试报告](docs/GEMINI_VALIDATION.md)。
+
 ## 原有 ChatGPT 功能
 
 一个本地、非官方的 MCP Server，让 Codex 等 MCP 客户端通过独立的持久浏览器配置操作 `chatgpt.com`。它不使用 OpenAI 官方付费 API，也不需要 API Key。消息发送通过网页完成；历史读取可能使用当前网页会话的内部接口。它不读取用户日常浏览器配置，也不会把登录信息写进 MCP 配置。
@@ -92,7 +96,7 @@ Gemini 不复用 ChatGPT 的模型名称、Pro 探针或 40 轮自动轮换策�
 ## 安装
 
 ```bash
-git clone https://github.com/Goudu666/chatgpt-web-mcp.git
+git clone https://github.com/Tw6249/chatgpt-web-mcp.git
 cd chatgpt-web-mcp
 npm ci
 npm run doctor

@@ -106,3 +106,13 @@ test("provider local status never opens a browser", async (t) => {
   assert.equal((await b.browserLifecycle()).browserRunning, false);
   assert.equal((await b.circuitBreakerStatus()).pending, null);
 });
+
+test("pending response reads never present the preceding answer as the new answer", async (t) => {
+  const b = await fixture(t);
+  await b.update({ pending: { conversationURL: 'https://gemini.google.com/app/test', responseCount: 1 } });
+  b.snapshot = async () => ({ url: 'https://gemini.google.com/app/test', responseCount: 1, text: 'Previous answer', busy: true, completeControl: true });
+  const response = await b.getLatestResponse();
+  assert.equal(response.text, ''); assert.equal(response.complete, false); assert.equal(response.pending, true);
+  b.snapshot = async () => ({ url: 'https://gemini.google.com/app/elsewhere', responseCount: 3, text: 'Unrelated answer' });
+  await assert.rejects(b.getLatestResponse(), (e) => e.code === 'CONVERSATION_CHANGED');
+});

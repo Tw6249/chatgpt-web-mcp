@@ -8,8 +8,8 @@ export const SELECTORS = {
   user: 'user-query',
   assistant: 'model-response',
   answer: 'message-content .markdown, .model-response-text .markdown, message-content',
-  complete: 'button[aria-label*="Copy"], button[aria-label*="复制"], button[data-test-id="copy-button"]',
+  complete: '.response-footer.complete, button[aria-label*="Copy"], button[aria-label*="复制"], button[data-test-id="copy-button"]',
   alerts: '[role="alert"], .error-message, .response-error, .snackbar-message',
-  attachments: 'file-preview, .file-preview, .attachment-preview, [data-test-id="file-preview"]',
-  upload: ['button[aria-label="Upload files"]', 'button[aria-label="上传文件"]', 'button[aria-label="上传和工具"]', 'button[aria-label="Add files"]', 'button[aria-label="添加文件"]', 'button[aria-label="Open upload file menu"]'],
+  attachments: 'uploader-file-preview, file-preview, .file-preview, .attachment-preview, [data-test-id="file-preview"]',
+  upload: ['button[aria-label="Upload & tools"]', 'button[aria-label="Upload files"]', 'button[aria-label="上传文件"]', 'button[aria-label="上传和工具"]', 'button[aria-label="Add files"]', 'button[aria-label="添加文件"]', 'button[aria-label="Open upload file menu"]'],
 };

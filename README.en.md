@@ -1,5 +1,7 @@
 # ChatGPT & Gemini Web MCP
 
+A fork of [Goudu666/chatgpt-web-mcp](https://github.com/Goudu666/chatgpt-web-mcp) with Gemini web support. The original MIT license and author attribution are preserved.
+
 ## Gemini support (0.3.0)
 
 The existing MCP entry point now exposes both `chatgpt_*` and `gemini_*` tools. Existing ChatGPT names and configuration remain compatible. Gemini has a separate persistent browser profile, operation lock, rate-limit state, pending-send journal and archive directory.
@@ -39,6 +41,8 @@ Validation: `npm test`, `npm run smoke`, `npm run test:browser`, and `npm pack -
 
 After signing in, explicitly run `node scripts/verify-gemini.js --send` to create a test conversation and send two synthetic prompts through MCP, checking completion, reconnect and follow-up context. Without `--send`, it only checks status. This script is excluded from CI.
 
+Add `--upload` to test attachments: `node scripts/verify-gemini.js --send --upload`. It generates a temporary text file containing only a synthetic marker, uploads it, and verifies Gemini reads the marker. It never uploads your documents. See the [validation report](docs/GEMINI_VALIDATION.md) for the actual live acceptance results.
+
 ## Existing ChatGPT features
 
 [中文说明](README.md)
@@ -72,7 +76,7 @@ Common browser locations are detected on macOS, Windows, and Linux. Set `CHATGPT
 ## Install
 
 ```bash
-git clone https://github.com/Goudu666/chatgpt-web-mcp.git
+git clone https://github.com/Tw6249/chatgpt-web-mcp.git
 cd chatgpt-web-mcp
 npm ci
 npm run doctor

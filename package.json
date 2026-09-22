@@ -7,12 +7,12 @@
   "author": "Goudu66",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Goudu666/chatgpt-web-mcp.git"
+    "url": "git+https://github.com/Tw6249/chatgpt-web-mcp.git"
   },
   "bugs": {
-    "url": "https://github.com/Goudu666/chatgpt-web-mcp/issues"
+    "url": "https://github.com/Tw6249/chatgpt-web-mcp/issues"
   },
-  "homepage": "https://github.com/Goudu666/chatgpt-web-mcp#readme",
+  "homepage": "https://github.com/Tw6249/chatgpt-web-mcp#readme",
   "keywords": [
     "mcp",
     "model-context-protocol",
@@ -26,6 +26,7 @@
   },
   "files": [
     "src",
+    "docs/GEMINI_VALIDATION.md",
     "scripts/doctor.js",
     "scripts/gemini.js",
     "scripts/inspect.js",
