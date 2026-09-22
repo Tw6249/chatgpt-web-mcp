@@ -19,6 +19,13 @@ try {
   const tools = await client.listTools();
   console.log(`tools=${tools.tools.length}`);
   console.log(tools.tools.map((tool) => tool.name).join("\n"));
+  assert.equal(tools.tools.filter((tool) => tool.name.startsWith('chatgpt_')).length, 29);
+  assert.equal(tools.tools.filter((tool) => tool.name.startsWith('gemini_')).length, 17);
+  for (const name of ['chat_providers', 'chat_status', 'chat_models', 'chat_select_model', 'chat_new', 'chat_send', 'chat_result', 'chat_cancel', 'chat_tasks', 'chat_history', 'chat_open', 'chat_archive', 'chat_abandon']) {
+    assert.ok(tools.tools.some((tool) => tool.name === name), `Missing tool: ${name}`);
+  }
+  const providers = await client.callTool({ name: 'chat_providers', arguments: {} });
+  assert.deepEqual(JSON.parse(providers.content[0].text).providers.map((p) => p.id), ['chatgpt', 'gemini']);
   for (const name of ["chatgpt_send_message", "chatgpt_status", "gemini_send_message", "gemini_get_latest_response", "gemini_status", "gemini_circuit_breaker_status"]) {
     assert.ok(tools.tools.some((tool) => tool.name === name), `Missing tool: ${name}`);
   }

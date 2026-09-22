@@ -995,6 +995,12 @@ export class ChatGPTBrowser {
     }
   }
 
+  async settleManagedGeneration() {
+    const stop = await this.firstVisible(SELECTORS.stopButton, { timeout: 100 });
+    if (stop) throw new ChatGPTWebError("回答仍在生成，不能解除任务状态。");
+    await updateRuntimeState({ activeGeneration: null, lastGenerationCompletedAt: Date.now() });
+  }
+
   async close({ terminateBrowser = false } = {}) {
     const chromeProcess = this.#chromeProcess;
     if (this.#browser) {

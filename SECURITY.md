@@ -39,3 +39,7 @@ Security fixes are applied to the latest released version and the current defaul
 ## Gemini state
 
 Gemini uses `~/.gemini-web-mcp` by default, separate from ChatGPT. Never commit or share either provider's profile, runtime state or conversation archives. Pending Gemini sends store a prompt hash and conversation URL, but not prompt content; explicit Markdown archives contain conversation content. These are local private data. Browser control binds to loopback. Gemini interaction uses visible web controls, without private API calls or automatic retries after rate limits.
+
+## Durable task journals
+
+Version 0.4 adds `~/.web-chat-mcp` (override: `WEB_CHAT_DATA_DIR`). Each provider has a private journal containing request/prompt hashes, timestamps, task identifiers, conversation URLs, error details and completed response text. Responses and errors may contain sensitive information even though prompts are not deliberately persisted. Restrict access using your OS account permissions. Journals are retained until manually removed; deleting them also removes duplicate-request protection. Do not place the directory in a public repository or share it for diagnostics. All MCP processes controlling the same provider profile must use the same journal directory.

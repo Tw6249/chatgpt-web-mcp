@@ -1,12 +1,15 @@
 import { z } from "zod";
 import { GeminiBrowser } from "./browser.js";
+import { TaskKernel } from '../core/tasks.js';
+import { geminiProvider } from '../providers/adapters.js';
 
-export function registerGeminiTools(server, browser = new GeminiBrowser()) {
+export function registerGeminiTools(server, browser = new GeminiBrowser(), kernel = new TaskKernel([geminiProvider(browser)])) {
+  const readOnly = new Set(['gemini_status', 'gemini_browser_lifecycle', 'gemini_get_latest_response', 'gemini_circuit_breaker_status', 'gemini_clear_circuit_breaker']);
   const timeout = z.number().int().min(1000).max(900000).optional();
   const waitOptions = { wait: z.boolean().default(true), timeoutMs: timeout };
   const tool = (name, description, schema, handler) => server.tool(name, description, schema, async (input, extra) => {
     try {
-      const result = await browser.runExclusive(() => handler(input), { signal: extra.signal });
+      const result = await kernel.run('gemini', () => handler(input), { signal: extra.signal, readOnly: readOnly.has(name), name });
       return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
     } catch (error) {
       return { isError: true, content: [{ type: "text", text: JSON.stringify({ error: error.message, code: error.code || "GEMINI_ERROR" }) }] };

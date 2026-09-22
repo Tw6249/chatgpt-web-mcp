@@ -4,6 +4,14 @@
 
 [English](README.en.md)
 
+## 统一接口与持久化任务（0.4.0）
+
+新增 13 个通用 `chat_*` 工具，保留原有 46 个 `chatgpt_*` / `gemini_*` 工具。用 `provider: "chatgpt"` 或 `"gemini"` 选择平台：`chat_send` 接收稳定的 `request_id`，返回持久化 `task_id`；`chat_result` 可在 MCP 重启后恢复读取。同一请求编号不会重复发送，任务执行期间会阻止同平台旧接口切换页面。
+
+提供任务列表、经身份核对的取消操作和显式异常恢复。通用任务核心、平台适配器、ChatGPT 工具注册与策略已分层；两个平台继续保留各自的浏览器实现与登录目录。新增 `web-chat-mcp` 命令别名，原命令和配置继续可用。
+
+更新后重启 MCP 连接。任务结果默认保存在私有目录 `~/.web-chat-mcp`，可通过 `WEB_CHAT_DATA_DIR` 配置；不要删除记录来重试不确定的发送。完整用法、状态说明和限制见 [统一任务文档](docs/UNIFIED_TASKS.md)。
+
 ## Gemini 网页端支持（0.3.0）
 
 同一个 MCP Server 现在同时提供 `chatgpt_*` 和 `gemini_*` 工具。原有 ChatGPT 工具名称与配置保持兼容；Gemini 使用独立的专用浏览器、登录目录、操作锁、限流状态及归档目录。

@@ -19,7 +19,8 @@ Usage:
   chatgpt-web-mcp help     Show this help
 
 Use --provider gemini with login, status or doctor for Gemini.
-The serve command exposes both chatgpt_* and gemini_* tools.
+The serve command exposes unified chat_* tools plus chatgpt_* and gemini_* compatibility tools.
+web-chat-mcp is an alias for this command.
 `);
 } else if (command === "serve") {
   await import("./index.js");

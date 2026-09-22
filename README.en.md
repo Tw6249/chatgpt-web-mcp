@@ -2,6 +2,12 @@
 
 A fork of [Goudu666/chatgpt-web-mcp](https://github.com/Goudu666/chatgpt-web-mcp) with Gemini web support. The original MIT license and author attribution are preserved.
 
+## Unified interfaces and durable tasks (0.4.0)
+
+Thirteen new `chat_*` tools share a provider-neutral coordinator while preserving all 46 legacy tools. `chat_send` accepts `provider` and a stable `request_id`; `chat_result` resumes by `task_id` after an MCP restart. Replays do not resend. Managed tasks prevent legacy tools from changing the same provider page until resolved. Task listing, verified cancellation and explicit recovery are included.
+
+The new `web-chat-mcp` executable aliases the existing command. Restart the MCP connection after updating. Private journals, including completed responses, default to `~/.web-chat-mcp` (`WEB_CHAT_DATA_DIR` overrides it). See [architecture, usage and recovery](docs/UNIFIED_TASKS.md) for scope and limitations.
+
 ## Gemini support (0.3.0)
 
 The existing MCP entry point now exposes both `chatgpt_*` and `gemini_*` tools. Existing ChatGPT names and configuration remain compatible. Gemini has a separate persistent browser profile, operation lock, rate-limit state, pending-send journal and archive directory.

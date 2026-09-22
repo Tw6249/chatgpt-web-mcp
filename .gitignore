@@ -15,5 +15,6 @@ scripts/local-*
 *.tmp
 .gemini-web-mcp/
 .chatgpt-web-mcp/
+.web-chat-mcp/
 conversation-context/
 *.lock.reclaim

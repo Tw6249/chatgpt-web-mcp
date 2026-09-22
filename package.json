@@ -1,6 +1,6 @@
 {
   "name": "chatgpt-web-mcp",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "type": "module",
   "description": "A local MCP server for ChatGPT and Gemini web UIs with isolated persistent browser profiles.",
   "license": "MIT",
@@ -22,7 +22,8 @@
     "gemini"
   ],
   "bin": {
-    "chatgpt-web-mcp": "./src/cli.js"
+    "chatgpt-web-mcp": "./src/cli.js",
+    "web-chat-mcp": "./src/cli.js"
   },
   "files": [
     "src",
@@ -38,7 +39,9 @@
     "SECURITY.md",
     "CONTRIBUTING.md",
     ".env.example",
-    "LICENSE"
+    "LICENSE",
+    "docs/UNIFIED_TASKS.md",
+    "scripts/verify-unified.js"
   ],
   "scripts": {
     "start": "node src/index.js",
@@ -57,5 +60,8 @@
     "@modelcontextprotocol/sdk": "^1.17.5",
     "playwright-core": "^1.54.2",
     "zod": "^3.25.76"
-  }
+  },
+  "contributors": [
+    "Tw6249"
+  ]
 }

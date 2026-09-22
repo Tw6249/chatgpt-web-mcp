@@ -9,6 +9,8 @@ import { chromium } from "playwright-core";
 import { GeminiBrowser } from "../src/gemini/browser.js";
 import { geminiConfig } from "../src/gemini/config.js";
 import { PersistentBrowser, processAlive, readState } from "../src/shared/persistent-browser.js";
+import { TaskKernel } from "../src/core/tasks.js";
+import { geminiProvider } from "../src/providers/adapters.js";
 
 let chrome;
 before(async () => { chrome = await chromium.launch({ executablePath: geminiConfig().executable || chromium.executablePath(), headless: true }); });
@@ -55,6 +57,31 @@ async function fixture(t) {
   t.after(async () => { await context.close(); assert.equal(path.dirname(directory), root); await fs.rm(directory, { recursive: true, force: true }); });
   return { b, page, directory };
 }
+
+test('unified tasks survive restart and reject legacy navigation until completion', async (t) => {
+  const { b, page, directory } = await fixture(t);
+  const kernel = new TaskKernel([geminiProvider(b)], { directory: path.join(directory, 'tasks') });
+  const input = { provider: 'gemini', request_id: 'browser-restart', prompt: 'Unified\n  task' };
+  const task = await kernel.send(input);
+  assert.equal(task.state, 'submitted');
+  const restarted = new TaskKernel([geminiProvider(new GeminiBrowser(b.config, b.runtime))], { directory: kernel.directory });
+  await assert.rejects(restarted.run('gemini', () => b.newChat()), { code: 'TASK_ACTIVE' });
+  assert.equal((await restarted.send(input)).task_id, task.task_id);
+  const result = await restarted.result(task.task_id, { wait: true, timeoutMs: 10000 });
+  assert.equal(result.state, 'completed'); assert.equal(result.response.text, 'Fixture reply 1');
+  assert.equal(await page.evaluate(() => sendCount), 1); assert.equal((await b.state()).pending, null);
+});
+
+test('unified cancellation stops only the verified browser generation', async (t) => {
+  const { b, page, directory } = await fixture(t);
+  await page.evaluate(() => { window.slow = true; });
+  const kernel = new TaskKernel([geminiProvider(b)], { directory: path.join(directory, 'tasks') });
+  const task = await kernel.send({ provider: 'gemini', request_id: 'cancel', prompt: 'Cancellable' });
+  await page.locator('[aria-label="Stop response"]').evaluate((e) => e.onclick = () => e.remove());
+  const result = await kernel.read(task.task_id, { cancel: true });
+  assert.equal(result.state, 'cancelled'); assert.equal(result.response.complete, false);
+  assert.equal((await b.state()).pending, null); assert.equal(await page.evaluate(() => sendCount), 1);
+});
 
 test("browser sends once, waits for final text and can continue the conversation", async (t) => {
   const { b, page } = await fixture(t);
