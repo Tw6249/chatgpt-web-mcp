@@ -83,6 +83,25 @@ test('unified cancellation stops only the verified browser generation', async (t
   assert.equal((await b.state()).pending, null); assert.equal(await page.evaluate(() => sendCount), 1);
 });
 
+test('model selection waits for a delayed new-page model picker', async (t) => {
+  const { b, page } = await fixture(t);
+  await page.locator('[aria-label="Open mode picker"]').evaluate((button) => { button.hidden = true; setTimeout(() => { button.hidden = false; }, 350); });
+  const result = await b.runExclusive(() => b.selectModel('Thinking'));
+  assert.equal(result.selectionVerified, true); assert.equal(await page.evaluate(() => sendCount), 0);
+});
+
+test('provider service error is not reported as a successful comparison answer', async (t) => {
+  const { b, page, directory } = await fixture(t);
+  const kernel = new TaskKernel([geminiProvider(b)], { directory: path.join(directory, 'tasks') });
+  const task = await kernel.send({ provider: 'gemini', request_id: 'service-error', prompt: 'test' });
+  await page.locator('[aria-label="Copy response"]').waitFor();
+  await page.locator('.markdown').evaluate((e) => { e.textContent = 'Sorry, something went wrong. Please try your request again.'; });
+  const result = await kernel.result(task.task_id);
+  assert.equal(result.state, 'uncertain'); assert.equal(result.error.code, 'PAGE_ERROR');
+  assert.equal(await page.evaluate(() => sendCount), 1);
+  assert.equal((await kernel.abandon(task.task_id, { confirm: true })).state, 'abandoned');
+});
+
 test("browser sends once, waits for final text and can continue the conversation", async (t) => {
   const { b, page } = await fixture(t);
   const first = await b.runExclusive(() => b.sendMessage({ prompt: "Hello\n\n  indented line", timeoutMs: 10000 }));

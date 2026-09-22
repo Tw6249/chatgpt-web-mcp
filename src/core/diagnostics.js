@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { readState, processAlive } from '../shared/persistent-browser.js';
 import { validateJournal } from './tasks.js';
+import { Installer, installDirectory } from '../maintenance.js';
 
 async function localState(file) {
   const state = await readState(file);
@@ -51,5 +52,12 @@ export async function diagnose(kernel, ids = [...kernel.providers.keys()]) {
     return { provider: id, ok: !checks.some((item) => item.status === 'fail'), checks };
   }));
   const nodeOK = Number(process.versions.node.split('.')[0]) >= 20;
-  return { schema_version: 1, scope: 'local_only', sign_in_verified: false, node: { version: process.version, ok: nodeOK }, ok: nodeOK && providers.every((p) => p.ok), providers };
+  let installation;
+  try {
+    const state = await new Installer().manifest();
+    const failure = await readState(path.join(installDirectory(), 'last-failure.json'));
+    installation = { managed: !!state.current, version: /^\d+\.\d+\.\d+(?:[-+][a-zA-Z0-9.-]+)?$/.test(state.package_version || '') ? state.package_version : null, rollback_available: !!state.previous,
+      last_failure: ['prepare', 'download', 'dependencies', 'unit_tests', 'mcp_smoke', 'activate'].includes(failure?.stage) ? { stage: failure.stage, code: 'INSTALL_FAILED', unresolved: Number(failure.at) > Number(state.activated_at || 0) } : null };
+  } catch { installation = { code: 'INVALID_INSTALL', action: 'Inspect managed installation metadata locally; do not modify browser profiles.' }; }
+  return { schema_version: 1, scope: 'local_only', sign_in_verified: false, node: { version: process.version, ok: nodeOK }, ok: nodeOK && providers.every((p) => p.ok) && !installation.code, installation, providers };
 }

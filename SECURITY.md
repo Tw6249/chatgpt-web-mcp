@@ -43,3 +43,9 @@ Gemini uses `~/.gemini-web-mcp` by default, separate from ChatGPT. Never commit 
 ## Durable task journals
 
 Version 0.4 adds `~/.web-chat-mcp` (override: `WEB_CHAT_DATA_DIR`). Each provider has a private journal containing request/prompt hashes, timestamps, task identifiers, conversation URLs, error details and completed response text. Responses and errors may contain sensitive information even though prompts are not deliberately persisted. Restrict access using your OS account permissions. Journals are retained until manually removed; deleting them also removes duplicate-request protection. Do not place the directory in a public repository or share it for diagnostics. All MCP processes controlling the same provider profile must use the same journal directory.
+
+## Comparisons, panel and managed installs
+
+Comparison targets must be explicitly authorized: adding a provider transmits the question to that provider. Comparison journals contain fingerprints and target metadata, while task journals retain responses. The local status panel binds to loopback, requires a random bearer token for its data API, checks Host/Origin and supports GET only. Never expose it with a public proxy or publish its token. Downloaded diagnostics exclude task IDs, prompts, responses, URLs, paths and raw command errors. Local task tables still contain task IDs.
+
+Managed installations fetch code only from this maintained repository, use the committed lockfile, disable dependency install scripts, and run tests before activation. `--ref` deliberately selects code to execute from that repository. The install root includes private failure logs; do not attach raw `install-debug.log` to public issues. Rollback changes code, not browser profiles or task records. Retain journal records for replay protection.

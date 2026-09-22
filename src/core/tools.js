@@ -1,13 +1,17 @@
 import { z } from 'zod';
 import { diagnose } from './diagnostics.js';
+import { Comparisons } from './comparisons.js';
 
 export function registerUnifiedTools(server, kernel) {
   const provider = z.enum([...kernel.providers.keys()]);
+  const comparisons = new Comparisons(kernel);
   const tool = (name, description, schema, handler) => server.tool(name, description, schema, async (input, extra) => {
     try { return { content: [{ type: 'text', text: JSON.stringify(await handler(input, extra.signal), null, 2) }] }; }
     catch (error) { return { isError: true, content: [{ type: 'text', text: JSON.stringify({ code: error.code || 'CHAT_ERROR', error: error.message }) }] }; }
   });
   const run = (id, method, args, signal, readOnly = false) => kernel.run(id, () => kernel.provider(id).browser[method](...args), { signal, readOnly, name: `chat_${method}` });
+  tool('chat_compare', 'Send the same question to 2..6 explicitly authorized provider/model targets in fresh conversations. Discover exact names with chat_models first. Providers run independently; models on one provider run sequentially. Reuse identical input and request_id to resume unsent targets. Each answer stays separate; no automatic judge or synthesis.', { request_id: z.string().min(1).max(128), prompt: z.string().min(1), targets: z.array(z.object({ provider, model: z.string().min(1) })).min(2).max(6), timeoutMs: z.number().int().min(1000).max(300000).default(30000) }, (i, signal) => comparisons.run(i, { signal }));
+  tool('chat_compare_result', 'Observe comparison children without sending or changing models. Returns each target response, task state and recovery guidance separately.', { comparison_id: z.string() }, (i, signal) => comparisons.result(i.comparison_id, { signal }));
   tool('chat_providers', 'List installed providers and their supported capabilities. No browser access.', {}, async () => ({ providers: [...kernel.providers.values()].map(({ id, capabilities }) => ({ id, capabilities })) }));
   tool('chat_doctor', 'Inspect local executable, runtime and task-journal health. Does not open a browser or verify sign-in. Report excludes paths, conversation URLs, task IDs, responses and raw errors.', { provider: provider.optional() }, (i) => diagnose(kernel, i.provider ? [i.provider] : undefined));
   tool('chat_status', 'Read the selected provider page and local managed-task state.', { provider }, async (i, signal) => ({ ...await run(i.provider, 'status', [], signal, true), ...await kernel.list(i.provider, 1) }));

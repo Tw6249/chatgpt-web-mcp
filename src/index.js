@@ -9,7 +9,7 @@ import { registerUnifiedTools } from './core/tools.js';
 
 const runtime = createRuntime();
 const { chatgpt, gemini, kernel } = runtime;
-const server = new McpServer({ name: 'web-chat', version: '0.5.0' }, {
+const server = new McpServer({ name: 'web-chat', version: '0.6.0' }, {
   instructions: 'For durable multi-provider work, use chat_send with a stable request_id, then chat_result with task_id. Reusing a request_id never resends. Never route user data to another provider without authorization. Browser sessions remain open. Legacy provider tools remain compatible but cannot mutate a page reserved by a managed task. The following routing guidance applies to legacy chatgpt_* tools: ' + chatgptInstructions(),
 });
 registerUnifiedTools(server, kernel);

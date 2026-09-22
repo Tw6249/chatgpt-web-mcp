@@ -23,6 +23,10 @@ export function isRateLimit(text) {
   return /too many requests|you(?:'ve| have) reached (?:your|the).*limit|usage limit|rate limit|达到.{0,12}(?:上限|限额)|请求过于频繁|次数已用完|已达.{0,8}上限/i.test(text);
 }
 
+export function isResponseFailure(text = '') {
+  return /^(?:Sorry, something went wrong\. Please try your request again\.|Something went wrong\. Please try again\.|抱歉，出了点问题。请重试。)$/i.test(normalize(text));
+}
+
 export class GeminiBrowser {
   constructor(config = geminiConfig(), runtime = new PersistentBrowser(config)) {
     this.config = config; this.runtime = runtime; this.queue = Promise.resolve();
@@ -161,6 +165,7 @@ export class GeminiBrowser {
     await this.editable({ empty: true });
     const page = await this.page();
     await page.goto(this.config.url, { waitUntil: "domcontentloaded" });
+    await page.waitForFunction((selectors) => selectors.some((selector) => [...document.querySelectorAll(selector)].some((e) => e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden')), SELECTORS.composer, { timeout: this.config.actionTimeout });
     await this.update({ selectedURL: this.config.url, lastActionAt: Date.now() });
     return this.status();
   }
@@ -204,6 +209,7 @@ export class GeminiBrowser {
       if (!pending) return this.getLatestResponse();
       if (pending.conversationURL && s.url !== pending.conversationURL) throw new WebUIError("CONVERSATION_CHANGED", "Gemini conversation changed while waiting; pending send was preserved.");
       const acknowledged = s.userCount > pending.userCount && hash(s.lastUser) === pending.promptHash;
+      if (acknowledged && !s.busy && isResponseFailure(s.text)) throw new WebUIError('PAGE_ERROR', 'Gemini returned a service error instead of an answer. Inspect the page; do not automatically resend.');
       if (acknowledged && !pending.conversationURL && /\/app\/.+/.test(s.url)) await this.update({ pending: { ...pending, conversationURL: s.url }, selectedURL: s.url });
       const signature = JSON.stringify([s.text, s.busy, s.completeControl, s.userCount, s.responseCount]);
       if (signature !== previous) { previous = signature; stableSince = Date.now(); }
@@ -230,6 +236,7 @@ export class GeminiBrowser {
     const s = await this.snapshot();
     const pending = (await this.state()).pending;
     if (pending?.conversationURL && pending.conversationURL !== s.url) throw new WebUIError("CONVERSATION_CHANGED", "Gemini conversation changed; the pending send was preserved.");
+    if (!s.busy && isResponseFailure(s.text)) throw new WebUIError('PAGE_ERROR', 'Gemini returned a service error instead of an answer.');
     return { provider: "gemini", url: s.url, text: pending && s.responseCount <= pending.responseCount ? "" : s.text, complete: !!s.text && !s.busy && s.completeControl && !pending, pending: !!pending, model: s.model };
   }
 
@@ -255,8 +262,7 @@ export class GeminiBrowser {
 
   async listModels() {
     await this.editable(); await this.throttle("change");
-    const button = await this.first(SELECTORS.model);
-    if (!button) throw new WebUIError("NO_MODEL_MENU", "Gemini model picker is unavailable.");
+    const button = await this.modelButton();
     await button.click();
     const page = await this.page();
     try {
@@ -285,8 +291,7 @@ export class GeminiBrowser {
 
   async selectModel(model) {
     await this.editable(); await this.throttle("change");
-    const button = await this.first(SELECTORS.model);
-    if (!button) throw new WebUIError("NO_MODEL_MENU", "Gemini model picker is unavailable.");
+    const button = await this.modelButton();
     await button.click(); const page = await this.page();
     try {
       await page.locator(SELECTORS.models).first().waitFor({ state: "visible" });
@@ -297,6 +302,16 @@ export class GeminiBrowser {
     const checked = await this.listModels();
     if (!checked.models.some((item) => normalize(item.name) === normalize(model) && item.selected)) throw new WebUIError("MODEL_NOT_CONFIRMED", "The model selection could not be confirmed from Gemini's menu.");
     return { ...await this.status(), selectedModel: model, selectionVerified: true };
+  }
+
+  async modelButton() {
+    const page = await this.page();
+    try {
+      await page.waitForFunction((selectors) => selectors.some((selector) => [...document.querySelectorAll(selector)].some((e) => e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden' && !e.disabled)), SELECTORS.model, { timeout: this.config.actionTimeout });
+    } catch { throw new WebUIError('NO_MODEL_MENU', 'Gemini model picker did not become ready; nothing was sent.'); }
+    const button = await this.first(SELECTORS.model);
+    if (!button) throw new WebUIError('NO_MODEL_MENU', 'Gemini model picker is unavailable.');
+    return button;
   }
 
   async listHistory({ query = "", limit = 20 } = {}) {

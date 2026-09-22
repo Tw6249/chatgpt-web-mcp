@@ -58,12 +58,13 @@ export class TaskKernel {
       return this.provider(id).browser.runExclusive(fn, { signal, name });
     }, signal);
   }
-  async send({ provider: id, request_id, prompt, files = [] }, { signal } = {}) {
+  async send({ provider: id, request_id, prompt, files = [], model, newConversation = false }, { signal } = {}) {
     if (typeof request_id !== 'string' || !request_id.trim() || request_id.length > 128) throw new WebUIError('INVALID_REQUEST_ID', 'A nonempty request_id of at most 128 characters is required. Reuse it after a timeout.');
     if (typeof prompt !== 'string' || !prompt.trim()) throw new WebUIError('EMPTY_PROMPT', 'Prompt must not be blank.');
     if (!Array.isArray(files) || files.length > 10 || files.some((file) => typeof file !== 'string' || !path.isAbsolute(file))) throw new WebUIError('INVALID_FILES', 'Use at most ten absolute local file paths.');
     const requestHash = fingerprint(request_id);
-    const payloadHash = fingerprint({ prompt, files });
+    if (model !== undefined && (typeof model !== 'string' || !model.trim())) throw new WebUIError('INVALID_MODEL', 'model must be a nonempty exact name.');
+    const payloadHash = fingerprint({ prompt, files, ...(model ? { model } : {}), ...(newConversation ? { newConversation: true } : {}) });
     return this.locked(id, async (state, save) => {
       const existing = Object.values(state.tasks).find((task) => task.requestHash === requestHash);
       if (existing) {
@@ -81,12 +82,14 @@ export class TaskKernel {
           await fs.access(file, fs.constants.R_OK);
         }
         await adapter.browser.runExclusive(async () => {
+          if (newConversation) await adapter.browser.newChat();
+          if (model) await adapter.browser.selectModel(model);
           task.baseline = await adapter.prepare();
           // Persist before the first possible send. A crash from this point on
           // must be reconciled from the page, never retried automatically.
           task.state = 'submitting'; task.updated_at = Date.now(); await save();
           const sent = await adapter.send({ prompt, files });
-          task.state = 'submitted'; task.updated_at = Date.now();
+          task.state = 'submitted'; task.submitted_at = Date.now(); task.updated_at = task.submitted_at;
           if (sent.url && !adapter.isProvisional?.(sent.url) && canonicalURL(sent.url) !== canonicalURL(task.baseline.url)) task.conversation_url = canonicalURL(sent.url);
           await save();
         }, { signal, name: 'chat_send' });
@@ -120,6 +123,9 @@ export class TaskKernel {
           const root = adapter.isRoot(expected);
           if (url !== expected && !root) throw new WebUIError('CONVERSATION_CHANGED', 'Open the task conversation before resuming it.');
           const acknowledged = observed.userCount === task.baseline.userCount + 1 && textHash(observed.lastUser) === task.promptHash;
+          // UI acknowledgement may arrive after submitPrompt(wait:false).
+          // Briefly keep observing an unchanged baseline, without a retry.
+          if (!acknowledged && !cancel && task.state === 'submitted' && task.submitted_at && Date.now() - task.submitted_at < 20000 && observed.userCount === task.baseline.userCount && observed.responseCount === task.baseline.responseCount) return;
           if (!acknowledged) throw new WebUIError('SEND_UNCONFIRMED', 'The expected user turn is not confirmed. No resend was attempted.');
           if (!adapter.isProvisional?.(url)) task.conversation_url = url;
           if (observed.complete && observed.responseCount > task.baseline.responseCount) {
@@ -163,7 +169,7 @@ export class TaskKernel {
       if (terminal.has(task.state)) return taskView(task);
       await this.provider(id).browser.runExclusive(async () => {
         const adapter = this.provider(id);
-        const observed = await adapter.inspect();
+        const observed = await adapter.inspect({ allowPageError: true });
         const expected = task.conversation_url || task.baseline?.url;
         if (!expected || (canonicalURL(observed.url) !== canonicalURL(expected) && !adapter.isRoot(canonicalURL(expected)))) throw new WebUIError('CONVERSATION_CHANGED', 'Return to the original page before abandoning tracking.');
         if (observed.busy) throw new WebUIError('GENERATING', 'Generation is active. Use chat_cancel for the verified task.');
@@ -182,6 +188,12 @@ export class TaskKernel {
       return { provider: id, active_task: state.active, total: tasks.length, offset, next_offset: offset + limit < tasks.length ? offset + limit : null, tasks: tasks.slice(offset, offset + limit).map((task) => {
         const view = taskView(task); delete view.response; return view;
       }) };
+    });
+  }
+  async findRequest(id, requestId) {
+    return this.locked(id, (state) => {
+      const task = Object.values(state.tasks).find((task) => task.requestHash === fingerprint(requestId));
+      return task ? taskView(task) : null;
     });
   }
 }

@@ -2,6 +2,7 @@ import { SELECTORS as chatgptSelectors } from '../selectors.js';
 import { SELECTORS as geminiSelectors } from '../gemini/selectors.js';
 import { WebUIError } from '../shared/persistent-browser.js';
 import { CHROME_EXECUTABLE, BROWSER_STATE_FILE, RUNTIME_STATE_FILE, OPERATION_LOCK_FILE } from '../config.js';
+import { isResponseFailure } from '../gemini/browser.js';
 
 async function stop(browser, selectors) {
   const button = await browser.firstVisible?.(selectors, { timeout: 500 }) || await browser.first?.(selectors);
@@ -26,8 +27,9 @@ export function geminiProvider(browser) {
       if (files.length) await browser.uploadFiles(files);
       return browser.submitPrompt({ wait: false });
     },
-    async inspect() {
+    async inspect({ allowPageError = false } = {}) {
       const s = await browser.snapshot(); await browser.check(s, { allowPending: true });
+      if (!allowPageError && !s.busy && isResponseFailure(s.text)) throw new WebUIError('PAGE_ERROR', 'Gemini returned a service error instead of an answer. No automatic retry.');
       return { ...s, complete: !!s.text && !s.busy && s.completeControl };
     },
     async settle() { await browser.update({ pending: null, lastCompletedAt: Date.now() }); },

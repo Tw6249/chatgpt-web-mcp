@@ -2,6 +2,12 @@
 
 A fork of [Goudu666/chatgpt-web-mcp](https://github.com/Goudu666/chatgpt-web-mcp) with Gemini web support. The original MIT license and author attribution are preserved.
 
+## Multi-model comparisons and managed installation (0.6.0)
+
+`chat_compare` asks the same question of 2–6 explicit provider/model targets and preserves separate, recoverable results. Providers operate independently; models sharing a provider run sequentially in fresh conversations. Setup, unified login, diagnostics, upgrade, rollback, a read-only local status panel and redacted reports are now available. There are 62 MCP tools with all legacy tools retained.
+
+Run `node src/cli.js setup` and use the generated stable MCP entry point for managed upgrades and rollback. Run `node src/cli.js panel` for local status. See [comparison workflows and installation](docs/COMPARISONS_AND_INSTALL.md) for exact commands and recovery behavior.
+
 ## Local diagnostics and task management (0.5.0)
 
 `chat_doctor` adds redacted local diagnostics for both providers without opening a browser. Task listings support state filters and pagination; task views include actionable recovery guidance. The CLI now supports `providers`, `doctor`, `tasks`, `result`, `cancel` and confirmed `abandon`, sharing the MCP task core. There are 60 MCP tools. See [management commands, privacy and exit codes](docs/MANAGEMENT.md).

@@ -63,6 +63,15 @@ test('uncertain delivery reconciles without another send', async (t) => {
   Object.assign(f.page, { responseCount: 1, busy: false, complete: true, text: 'recovered' });
   assert.equal((await f.kernel.result(task.task_id)).state, 'completed'); assert.equal(f.sends(), 1);
 });
+test('delayed UI acknowledgement stays submitted without resending and later completes', async (t) => {
+  const f = await fixture(t); const send = f.adapter.send;
+  f.adapter.send = async () => ({ url: f.page.url });
+  const task = await f.kernel.send(f.input);
+  assert.equal((await f.kernel.result(task.task_id)).state, 'submitted');
+  await send(f.input); Object.assign(f.page, { responseCount: 1, complete: true, busy: false, text: 'acknowledged' });
+  assert.equal((await f.kernel.result(task.task_id)).state, 'completed');
+  assert.equal(f.sends(), 1);
+});
 test('ChatGPT provisional WEB conversation URL is not pinned as permanent identity', async (t) => {
   const f = await fixture(t, 'chatgpt');
   f.page.url = 'https://chatgpt.com/';

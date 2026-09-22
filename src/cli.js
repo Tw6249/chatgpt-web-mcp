@@ -2,7 +2,10 @@
 
 const command = process.argv[2] || "serve";
 const management = ['providers', 'doctor', 'tasks', 'result', 'cancel', 'abandon'];
-if (management.includes(command)) {
+if (['setup', 'upgrade', 'rollback', 'panel', 'report', 'login'].includes(command)) {
+  const { runLifecycle } = await import('./lifecycle.js');
+  await runLifecycle(command, process.argv.slice(3));
+} else if (management.includes(command)) {
   const { runManagement } = await import('./management.js');
   await runManagement(command, process.argv.slice(3));
 } else {
@@ -18,7 +21,12 @@ if (["help", "--help", "-h"].includes(command)) {
 
 Usage:
   chatgpt-web-mcp serve    Start the stdio MCP server (default)
-  chatgpt-web-mcp login    Open the dedicated browser for manual login
+  chatgpt-web-mcp setup [--ref main]        Install a tested managed release; print MCP config
+  chatgpt-web-mcp login [--provider all]   Manual sign-in in dedicated browser windows
+  chatgpt-web-mcp upgrade [--ref main]     Test and activate a managed release
+  chatgpt-web-mcp rollback                 Switch to the previous tested release
+  chatgpt-web-mcp panel [--port 0]         Start a read-only local status panel
+  chatgpt-web-mcp report [--out ABS_PATH]  Export redacted local diagnostics
   chatgpt-web-mcp status   Inspect the current local browser state
   chatgpt-web-mcp providers                 List installed providers
   chatgpt-web-mcp doctor [--provider all]   Redacted local diagnostics (no browser)
