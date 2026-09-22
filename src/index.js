@@ -20,6 +20,7 @@ import {
   SEND_INTERVAL_MS,
 } from "./config.js";
 import { userFacingError } from "./errors.js";
+import { registerGeminiTools } from "./gemini/tools.js";
 
 const browser = new ChatGPTBrowser();
 const probeInstructions = PROBE_ENABLED
@@ -27,7 +28,7 @@ const probeInstructions = PROBE_ENABLED
   : "临时 Pro 身份探针默认停用。不得调用 chatgpt_probe_pro_identity，也不得用 requestPro=true 调用 chatgpt_route_new_chat；这些调用会在新建临时对话或发送测试消息前停止。普通极高路由使用 requestPro=false。";
 const server = new McpServer({
   name: "chatgpt-web",
-  version: "0.2.1",
+  version: "0.3.0",
 }, {
   instructions:
     `默认保持专用浏览器和 ChatGPT 页面常驻，除非用户明确要求，否则绝不调用 chatgpt_close_browser。发送最小间隔 ${SEND_INTERVAL_MS / 1_000} 秒，对话变更最小间隔 ${CONVERSATION_CHANGE_INTERVAL_MS / 1_000} 秒，回答完成后再等 ${POST_RESPONSE_CONVERSATION_COOLDOWN_MS / 1_000} 秒才切换；这些是下限，不保证免于限流。新建前的额外刷新当前${REFRESH_BEFORE_NEW_CHAT ? "开启" : "关闭"}，由 CHATGPT_WEB_REFRESH_BEFORE_NEW_CHAT 控制。每次发送前仍刷新当前对话，并校验 URL、草稿和附件；检测到变化则停止。对话达到 ${MAX_CONVERSATION_TURNS} 轮或出现 maximum-length 错误时，原子发送会先读取完整 transcript 并归档到 ${CONTEXT_ARCHIVE_DIR}，再新建普通对话；直接 submit_prompt 则拦截。新任务优先用 chatgpt_route_new_chat，普通请求使用页面可用档位“${DEFAULT_ANSWER_TIER}”。${probeInstructions}`,
@@ -356,6 +357,8 @@ tool(
   { allowDuringPause: true },
 );
 
+const gemini = registerGeminiTools(server);
+
 let shuttingDown = false;
 const shutdown = async () => {
   if (shuttingDown) return;
@@ -363,6 +366,7 @@ const shutdown = async () => {
   // Disconnect Playwright only. The dedicated Chrome is intentionally kept
   // alive so the next MCP process can reuse its page and signed-in session.
   await browser.close();
+  await gemini.close();
   process.exit(0);
 };
 

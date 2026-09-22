@@ -18,32 +18,33 @@ export function chromeExecutableCandidates({
   env = process.env,
   home = os.homedir(),
 } = {}) {
-  if (env.CHATGPT_WEB_CHROME) return [path.resolve(env.CHATGPT_WEB_CHROME)];
+  const platformPath = platform === "win32" ? path.win32 : path.posix;
+  if (env.CHATGPT_WEB_CHROME) return [platformPath.resolve(env.CHATGPT_WEB_CHROME)];
 
   if (platform === "darwin") {
     return unique([
       "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
       "/Applications/Chromium.app/Contents/MacOS/Chromium",
       "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
-      path.join(home, "Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
-      path.join(home, "Applications/Chromium.app/Contents/MacOS/Chromium"),
+      platformPath.join(home, "Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
+      platformPath.join(home, "Applications/Chromium.app/Contents/MacOS/Chromium"),
     ]);
   }
 
   if (platform === "win32") {
     return unique([
-      env.LOCALAPPDATA && path.join(env.LOCALAPPDATA, "Google/Chrome/Application/chrome.exe"),
-      env.PROGRAMFILES && path.join(env.PROGRAMFILES, "Google/Chrome/Application/chrome.exe"),
+      env.LOCALAPPDATA && platformPath.join(env.LOCALAPPDATA, "Google/Chrome/Application/chrome.exe"),
+      env.PROGRAMFILES && platformPath.join(env.PROGRAMFILES, "Google/Chrome/Application/chrome.exe"),
       env["PROGRAMFILES(X86)"] &&
-        path.join(env["PROGRAMFILES(X86)"], "Google/Chrome/Application/chrome.exe"),
-      env.PROGRAMFILES && path.join(env.PROGRAMFILES, "Microsoft/Edge/Application/msedge.exe"),
+        platformPath.join(env["PROGRAMFILES(X86)"], "Google/Chrome/Application/chrome.exe"),
+      env.PROGRAMFILES && platformPath.join(env.PROGRAMFILES, "Microsoft/Edge/Application/msedge.exe"),
       env["PROGRAMFILES(X86)"] &&
-        path.join(env["PROGRAMFILES(X86)"], "Microsoft/Edge/Application/msedge.exe"),
+        platformPath.join(env["PROGRAMFILES(X86)"], "Microsoft/Edge/Application/msedge.exe"),
     ]);
   }
 
   const pathEntries = String(env.PATH || "")
-    .split(path.delimiter)
+    .split(platformPath.delimiter)
     .filter(Boolean);
   const executableNames = [
     "google-chrome-stable",
@@ -55,7 +56,7 @@ export function chromeExecutableCandidates({
   ];
   return unique(
     pathEntries.flatMap((directory) =>
-      executableNames.map((name) => path.join(directory, name)),
+      executableNames.map((name) => platformPath.join(directory, name)),
     ),
   );
 }

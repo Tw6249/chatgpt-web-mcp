@@ -1,6 +1,67 @@
-# ChatGPT Web MCP
+# ChatGPT & Gemini Web MCP
 
 [English](README.en.md)
+
+## Gemini 网页端支持（0.3.0）
+
+同一个 MCP Server 现在同时提供 `chatgpt_*` 和 `gemini_*` 工具。原有 ChatGPT 工具名称与配置保持兼容；Gemini 使用独立的专用浏览器、登录目录、操作锁、限流状态及归档目录。
+
+```bash
+npm ci
+node src/cli.js doctor --provider gemini
+node src/cli.js login --provider gemini
+```
+
+在打开的专用窗口中手动登录 Google/Gemini。程序不读取日常 Chrome 的登录资料，不接受密码或 Cookie。已有 MCP 配置仍指向 `src/index.js`；更新代码后重启 MCP 客户端连接，即可发现 Gemini 工具。
+
+典型调用顺序：
+
+1. `gemini_status` 检查登录与当前对话。
+2. `gemini_new_chat` 新建对话（已有草稿、附件或未确认的发送会阻止切换）。
+3. `gemini_send_message` 发送并等待回答。
+4. 如果返回 `pending: true` 或 `timedOut: true`，调用 `gemini_get_latest_response` 并设置 `wait: true` 继续等待，**不要重新发送**。
+5. 继续调用 `gemini_send_message` 追问，或者显式调用 `gemini_archive_conversation` 将已加载消息保存为 Markdown。
+
+附件流程：`gemini_write_prompt` → `gemini_upload_files`（仅上传用户授权的绝对路径）→ `gemini_submit_prompt`。原子 `gemini_send_message` 要求空输入框，避免把用户原有草稿或附件一起发出。
+
+| Gemini 工具 | 用途 |
+| --- | --- |
+| `gemini_status` / `gemini_browser_lifecycle` | 页面状态 / 本地浏览器状态 |
+| `gemini_new_chat` | 新建对话 |
+| `gemini_write_prompt` / `gemini_upload_files` | 写入草稿 / 上传文件 |
+| `gemini_submit_prompt` / `gemini_send_message` | 提交已有草稿 / 原子发送新问题 |
+| `gemini_get_latest_response` | 读取回复或恢复等待 |
+| `gemini_list_models` / `gemini_select_model` | 列出并选择页面实际可用的模式 |
+| `gemini_list_history` / `gemini_select_history` | 列出已加载侧栏记录 / 打开对话 URL |
+| `gemini_archive_conversation` | 归档当前已加载消息，明确不保证完整历史 |
+| `gemini_circuit_breaker_status` / `gemini_clear_circuit_breaker` | 限流状态 / 人工确认后恢复 |
+| `gemini_resolve_pending` | 用户人工核对后解除不确定发送状态，不重发 |
+| `gemini_close_browser` | 仅在用户明确要求时关闭专用浏览器 |
+
+Gemini 不复用 ChatGPT 的模型名称、Pro 探针或 40 轮自动轮换策略。模型名直接取自页面菜单。网页布局、语言、账户与地区差异可能导致控件无法识别，此时工具返回错误并停止。Gemini 归档和历史列表只覆盖当前页面已加载的内容；不调用 Gemini 私有接口。
+
+发送与对话/模式切换间隔至少 5 秒。检测到 Gemini HTTP 429 或页面限流提示后停止，不自动重试、不自动切换账号。只有用户人工确认恢复后才可清除限流状态，并继续等待至少 5 分钟。发送意图在点击前落盘，即使进程退出或超时，也会保留待确认标记以防重复发送。
+
+环境变量（均可选）：
+
+| 变量 | 默认值 |
+| --- | --- |
+| `GEMINI_WEB_DATA_DIR` | `~/.gemini-web-mcp` |
+| `GEMINI_WEB_PROFILE` | 数据目录下的 `chrome-profile` |
+| `GEMINI_WEB_CHROME` | 自动检测 Chrome/Edge，可复用 `CHATGPT_WEB_CHROME` |
+| `GEMINI_WEB_ARCHIVE_DIR` | 数据目录下的 `conversation-context` |
+| `GEMINI_WEB_HEADLESS` | `false`，首次登录应使用可见窗口 |
+| `GEMINI_WEB_ACTION_TIMEOUT_MS` | `20000` |
+| `GEMINI_WEB_RESPONSE_TIMEOUT_MS` | `300000` |
+| `GEMINI_WEB_SEND_INTERVAL_MS` | `5000`，不可小于此值 |
+| `GEMINI_WEB_CHANGE_INTERVAL_MS` | `5000`，不可小于此值 |
+| `GEMINI_WEB_RECOVERY_INTERVAL_MS` | `300000`，不可小于此值 |
+
+验证：`npm test`、`npm run smoke`、`npm run test:browser`、`npm pack --dry-run`。浏览器测试使用本地模拟页面拦截所有网络请求，无需账号，不发送真实消息；真实网页验收需要另行手动登录并低频测试。浏览器测试需安装 Chrome/Edge，或执行 `npx playwright-core install chromium`。
+
+登录后可显式运行 `node scripts/verify-gemini.js --send`：通过 MCP 新建测试对话，发送两个不含私人信息的问题，验证回复完成、重连和上下文追问。不加 `--send` 时只检查状态；此脚本不进入 CI。
+
+## 原有 ChatGPT 功能
 
 一个本地、非官方的 MCP Server，让 Codex 等 MCP 客户端通过独立的持久浏览器配置操作 `chatgpt.com`。它不使用 OpenAI 官方付费 API，也不需要 API Key。消息发送通过网页完成；历史读取可能使用当前网页会话的内部接口。它不读取用户日常浏览器配置，也不会把登录信息写进 MCP 配置。
 

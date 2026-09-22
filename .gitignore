@@ -11,3 +11,9 @@ chrome-profile/
 browser-state.json
 runtime-state.json
 browser-operation.lock
+scripts/local-*
+*.tmp
+.gemini-web-mcp/
+.chatgpt-web-mcp/
+conversation-context/
+*.lock.reclaim

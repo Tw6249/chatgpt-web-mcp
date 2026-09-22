@@ -35,3 +35,7 @@ Contributions must preserve these behaviors:
 ## Supported versions
 
 Security fixes are applied to the latest released version and the current default branch. Older snapshots may not receive backports.
+
+## Gemini state
+
+Gemini uses `~/.gemini-web-mcp` by default, separate from ChatGPT. Never commit or share either provider's profile, runtime state or conversation archives. Pending Gemini sends store a prompt hash and conversation URL, but not prompt content; explicit Markdown archives contain conversation content. These are local private data. Browser control binds to loopback. Gemini interaction uses visible web controls, without private API calls or automatic retries after rate limits.

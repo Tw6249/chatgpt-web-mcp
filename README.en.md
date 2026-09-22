@@ -1,4 +1,45 @@
-# ChatGPT Web MCP
+# ChatGPT & Gemini Web MCP
+
+## Gemini support (0.3.0)
+
+The existing MCP entry point now exposes both `chatgpt_*` and `gemini_*` tools. Existing ChatGPT names and configuration remain compatible. Gemini has a separate persistent browser profile, operation lock, rate-limit state, pending-send journal and archive directory.
+
+```bash
+npm ci
+node src/cli.js doctor --provider gemini
+node src/cli.js login --provider gemini
+```
+
+Sign in to Google/Gemini manually in the dedicated window. The server never reads your everyday browser profile or accepts passwords/cookies. Restart the MCP client connection after updating to discover the new tools; the entry point remains `src/index.js`.
+
+Use `gemini_status`, `gemini_new_chat`, then `gemini_send_message`. A `pending: true` or `timedOut: true` result is **not completion**: resume with `gemini_get_latest_response` and `wait: true`, without resending. Send intent is persisted before clicking, so uncertain delivery survives process exits. Only user-confirmed manual inspection can resolve an uncertain send with `gemini_resolve_pending`.
+
+For authorized attachments, use `gemini_write_prompt`, `gemini_upload_files` (absolute paths), and `gemini_submit_prompt`. Atomic `gemini_send_message` requires an empty composer. Drafts, attachments, and pending responses prevent accidental navigation or overwrites.
+
+Additional tools: `gemini_list_models`, `gemini_select_model`, `gemini_list_history`, `gemini_select_history`, `gemini_archive_conversation`, `gemini_browser_lifecycle`, `gemini_circuit_breaker_status`, `gemini_clear_circuit_breaker`, and `gemini_close_browser`. Close the dedicated browser only when explicitly requested.
+
+Model names come from the actual page. History and Markdown archives contain only currently loaded messages; they do not claim complete history. There is no private Gemini API, guessed model identity, Pro probing, or automatic 40-turn rotation. UI/account/language changes can make controls unavailable; the adapter stops with an error.
+
+Sends and conversation/model changes are spaced by at least five seconds. Gemini HTTP 429 or rate-limit UI stops further actions, without retries or account switching. Clearing a breaker requires manual confirmation and enforces a further five-minute recovery period.
+
+| Environment variable | Default |
+| --- | --- |
+| `GEMINI_WEB_DATA_DIR` | `~/.gemini-web-mcp` |
+| `GEMINI_WEB_PROFILE` | `chrome-profile` under the data directory |
+| `GEMINI_WEB_CHROME` | Auto-detected Chrome/Edge; falls back to `CHATGPT_WEB_CHROME` |
+| `GEMINI_WEB_ARCHIVE_DIR` | `conversation-context` under the data directory |
+| `GEMINI_WEB_HEADLESS` | `false` (manual login needs a visible window) |
+| `GEMINI_WEB_ACTION_TIMEOUT_MS` | `20000` |
+| `GEMINI_WEB_RESPONSE_TIMEOUT_MS` | `300000` |
+| `GEMINI_WEB_SEND_INTERVAL_MS` | `5000` minimum |
+| `GEMINI_WEB_CHANGE_INTERVAL_MS` | `5000` minimum |
+| `GEMINI_WEB_RECOVERY_INTERVAL_MS` | `300000` minimum |
+
+Validation: `npm test`, `npm run smoke`, `npm run test:browser`, and `npm pack --dry-run`. Browser integration tests intercept all requests with local fixtures and require no account or real sends. Install Chrome/Edge or run `npx playwright-core install chromium`. Live Gemini acceptance is separate and requires manual sign-in and low-frequency checks.
+
+After signing in, explicitly run `node scripts/verify-gemini.js --send` to create a test conversation and send two synthetic prompts through MCP, checking completion, reconnect and follow-up context. Without `--send`, it only checks status. This script is excluded from CI.
+
+## Existing ChatGPT features
 
 [中文说明](README.md)
 

@@ -10,6 +10,7 @@ cd chatgpt-web-mcp
 npm ci
 npm test
 npm run smoke
+npm run test:browser
 ```
 
 Node.js 20 or newer is required. `npm run smoke` starts the stdio server and lists its MCP tools without opening ChatGPT.
@@ -35,6 +36,11 @@ Do not add a live ChatGPT login or message-send test to CI. Live browser verific
 - `src/cli.js`: `serve`, `login`, `status`, and `doctor` commands
 - `scripts/`: local login, diagnostics, and offline smoke checks
 - `test/`: offline unit tests
+- `src/gemini/`: Gemini configuration, selectors, UI adapter and MCP tools
+- `src/shared/persistent-browser.js`: provider-neutral dedicated browser lifecycle and state locking
+- `integration/`: offline Chromium fixture tests; no live accounts or messages
+
+CI runs unit/MCP smoke tests on Linux and Windows, plus offline browser integration tests on Linux. Install Chrome/Edge or Playwright Chromium to run the browser tests locally. Live Gemini testing must be explicit, low-frequency and use a manually signed-in dedicated profile.
 
 ## Safety requirements
 

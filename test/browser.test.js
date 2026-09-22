@@ -180,7 +180,7 @@ test("chromeExecutableCandidates supports explicit and platform-specific paths",
     env: { LOCALAPPDATA: "C:\\Users\\test\\AppData\\Local" },
     home: "C:\\Users\\test",
   });
-  assert.ok(windows.some((candidate) => candidate.endsWith("Google/Chrome/Application/chrome.exe")));
+  assert.ok(windows.some((candidate) => candidate.endsWith("Google\\Chrome\\Application\\chrome.exe")));
 });
 
 test("classifyRateLimitText separates history and generation limits", () => {

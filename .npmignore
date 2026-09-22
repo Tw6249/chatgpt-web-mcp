@@ -8,3 +8,5 @@ test/
 *.jsonl
 *.png
 coverage/
+integration/
+scripts/local-*
