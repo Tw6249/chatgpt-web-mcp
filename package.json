@@ -54,7 +54,7 @@
     "doctor": "node src/cli.js doctor",
     "smoke": "node scripts/smoke-mcp.js",
     "test": "node --test",
-    "test:browser": "node --test integration/gemini.browser.js integration/panel.browser.js",
+    "test:browser": "node --test integration/gemini.browser.js integration/panel.browser.js integration/chatgpt-messages.browser.js",
     "setup": "node src/cli.js setup",
     "upgrade": "node src/cli.js upgrade",
     "rollback": "node src/cli.js rollback",

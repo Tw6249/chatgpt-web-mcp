@@ -1693,7 +1693,7 @@ export class ChatGPTBrowser {
     if (!target) return { editing: false, reason: null };
     const signals = await target.evaluate((element) => {
       const userMessage = element.closest(
-        "[data-message-author-role='user'], article[data-turn='user'], section[data-turn='user']",
+        "[data-message-author-role='user'], article[data-turn='user'], section[data-turn='user'], [data-user-message-bubble], [data-chatgpt-search-unit-key$=':user'], [data-content-search-unit-key$=':user']",
       );
       if (userMessage) {
         return { insideUserMessage: true, visibleCancel: false };
@@ -3302,9 +3302,14 @@ export class ChatGPTBrowser {
         author:
           element.getAttribute("data-message-author-role") ||
           element.getAttribute("data-turn") ||
+          (element.matches("[data-markdown-text-style='assistant-message']")
+            ? "assistant"
+            : element.closest("[data-user-message-bubble]") ? "user" : null) ||
           null,
         id:
           element.getAttribute("data-message-id") ||
+          element.closest("[data-chatgpt-selection-message-id]")?.getAttribute("data-chatgpt-selection-message-id") ||
+          element.closest("[data-chatgpt-search-message-ids]")?.getAttribute("data-chatgpt-search-message-ids")?.trim().split(/\s+/u)[0] ||
           element.getAttribute("data-testid") ||
           element.id ||
           null,
@@ -3364,7 +3369,8 @@ export class ChatGPTBrowser {
     return page.evaluate(() => {
       const anchor =
         document.querySelector("[data-message-author-role]") ||
-        document.querySelector("section[data-turn], article[data-turn]");
+        document.querySelector("section[data-turn], article[data-turn]") ||
+        document.querySelector("[data-user-message-bubble], [data-markdown-text-style='assistant-message']");
       let element = anchor;
       while (element) {
         const style = getComputedStyle(element);
@@ -3396,7 +3402,8 @@ export class ChatGPTBrowser {
     return page.evaluate(() => {
       const anchor =
         document.querySelector("[data-message-author-role]") ||
-        document.querySelector("section[data-turn], article[data-turn]");
+        document.querySelector("section[data-turn], article[data-turn]") ||
+        document.querySelector("[data-user-message-bubble], [data-markdown-text-style='assistant-message']");
       let element = anchor;
       while (element) {
         const style = getComputedStyle(element);
@@ -3424,7 +3431,8 @@ export class ChatGPTBrowser {
     await page.evaluate((desiredTop) => {
       const anchor =
         document.querySelector("[data-message-author-role]") ||
-        document.querySelector("section[data-turn], article[data-turn]");
+        document.querySelector("section[data-turn], article[data-turn]") ||
+        document.querySelector("[data-user-message-bubble], [data-markdown-text-style='assistant-message']");
       let element = anchor;
       while (element) {
         const style = getComputedStyle(element);
@@ -3543,6 +3551,15 @@ export class ChatGPTBrowser {
     return this.#page.locator(SELECTORS.userMessages.join(", "));
   }
 
+  async assistantIsStreaming(assistant) {
+    if (!assistant) return false;
+    return assistant.evaluate((element) => {
+      const scope = element.closest("[data-chatgpt-search-unit-key$=':assistant']") || element;
+      const markers = "[data-is-streaming='true'], .result-streaming, [class*='loading-shimmer'], [data-testid*='thinking']";
+      return scope.matches(markers) || Boolean(scope.querySelector(markers));
+    });
+  }
+
   async userMessageSnapshot() {
     const users = this.userLocator();
     const count = await users.count();
@@ -3552,6 +3569,7 @@ export class ChatGPTBrowser {
       text: element.innerText || element.textContent || "",
       lastId:
         element.getAttribute("data-message-id") ||
+        element.closest("[data-chatgpt-search-message-ids]")?.getAttribute("data-chatgpt-search-message-ids")?.trim().split(/\s+/u)[0] ||
         element.getAttribute("data-testid") ||
         element.id ||
         null,
@@ -3851,11 +3869,9 @@ export class ChatGPTBrowser {
             // button or the legacy streaming marker.  Treat its shimmer as
             // active generation; otherwise waitForResponse returns before
             // the final answer is attached to the same assistant node.
-            const streaming = Boolean(
-              last?.querySelector(
-                "[data-is-streaming='true'], .result-streaming, [class*='loading-shimmer'], [data-testid*='thinking']",
-              ),
-            );
+            const scope = last?.closest("[data-chatgpt-search-unit-key$=':assistant']") || last;
+            const markers = "[data-is-streaming='true'], .result-streaming, [class*='loading-shimmer'], [data-testid*='thinking']";
+            const streaming = Boolean(scope?.matches(markers) || scope?.querySelector(markers));
             return { count: assistant.length, response, stop, streaming, rateLimited };
           };
           let stableText = "";
@@ -4461,15 +4477,7 @@ export class ChatGPTBrowser {
     const lastAssistantText = lastAssistant
       ? await lastAssistant.innerText().catch(() => "")
       : "";
-    const streaming = lastAssistant
-      ? await lastAssistant
-          .locator(
-            "[data-is-streaming='true'], .result-streaming, [class*='loading-shimmer'], [data-testid*='thinking']",
-          )
-          .count()
-          .then((value) => value > 0)
-          .catch(() => false)
-      : false;
+    const streaming = await this.assistantIsStreaming(lastAssistant);
     // A completed response can leave an empty assistant placeholder after
     // streaming finishes. Preserve the PR's node-count/change completion rule.
     const generationComplete = Boolean(

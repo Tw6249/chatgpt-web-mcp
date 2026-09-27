@@ -33,11 +33,18 @@ export const SELECTORS = {
     // an active generation forever when the shimmer node is left in the DOM.
     "article[data-turn='assistant']:not(:has([data-message-author-role='assistant']))",
     "section[data-turn='assistant']:not(:has([data-message-author-role='assistant']))",
+    // September 2026 layouts expose semantic content nodes instead of role
+    // wrappers. Read the answer body, not its accessible heading or controls.
+    // Exclude legacy ancestors so mixed layouts still count each message once.
+    "[data-markdown-text-style='assistant-message']:not([data-message-author-role='assistant'] *):not(article[data-turn='assistant'] *):not(section[data-turn='assistant'] *)",
   ],
   userMessages: [
     "[data-message-author-role='user']",
     "article[data-turn='user']:not(:has([data-message-author-role='user']))",
     "section[data-turn='user']:not(:has([data-message-author-role='user']))",
+    // The bubble also contains an ellipsis and a localized 'Show more' button.
+    // Including them changes the prompt hash and strands a submitted task.
+    "[data-user-message-bubble] [data-search-result-target]:not([data-message-author-role='user'] *):not(article[data-turn='user'] *):not(section[data-turn='user'] *)",
   ],
   fileInput: [
     "input[type='file']",
