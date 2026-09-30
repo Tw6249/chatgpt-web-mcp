@@ -2,6 +2,8 @@ import fs from "node:fs/promises";
 import { spawn } from "node:child_process";
 import net from "node:net";
 import path from "node:path";
+import { AsyncLocalStorage } from "node:async_hooks";
+import { sessionPage, sessionView, mergeSessionView, validateSessionId } from './shared/sessions.js';
 
 import { chromium } from "playwright-core";
 
@@ -51,6 +53,8 @@ import { SELECTORS, TEXT } from "./selectors.js";
 // wrappers in JavaScript instead, using an anchored match so a real answer
 // mentioning the word "thinking" is not discarded.
 const THINKING_WRAPPER_RE = /^\s*(?:thinking|思考)(?:\s*(?:[.…:：]|$))/iu;
+const sessionContext = new AsyncLocalStorage();
+const SESSION_FIELDS = ['activeGeneration'];
 
 function normalize(value) {
   return String(value || "")
@@ -644,12 +648,16 @@ async function writeBrowserState(value) {
   });
 }
 
-async function readRuntimeState() {
+async function readRawRuntimeState() {
   try {
     return JSON.parse(await fs.readFile(RUNTIME_STATE_FILE, "utf8"));
   } catch {
     return {};
   }
+}
+
+async function readRuntimeState() {
+  return sessionView(await readRawRuntimeState(), sessionContext.getStore(), SESSION_FIELDS);
 }
 
 async function withRuntimeState(update, { signal } = {}) {
@@ -677,9 +685,11 @@ async function withRuntimeState(update, { signal } = {}) {
   }
 
   try {
-    const state = await readRuntimeState();
+    const raw = await readRawRuntimeState();
+    const state = sessionView(raw, sessionContext.getStore(), SESSION_FIELDS);
     const { state: nextState = state, result } = await update(state);
-    await fs.writeFile(RUNTIME_STATE_FILE, `${JSON.stringify(nextState, null, 2)}\n`, {
+    const merged = mergeSessionView(raw, nextState, sessionContext.getStore(), SESSION_FIELDS);
+    await fs.writeFile(RUNTIME_STATE_FILE, `${JSON.stringify(merged, null, 2)}\n`, {
       mode: 0o600,
     });
     return result;
@@ -946,6 +956,7 @@ export function parseAdvancedRowValue(text, labels) {
 }
 
 export class ChatGPTBrowser {
+  constructor({ sessionId } = {}) { this.sessionId = validateSessionId(sessionId); }
   #browser = null;
   #chromeProcess = null;
   #context = null;
@@ -1044,7 +1055,8 @@ export class ChatGPTBrowser {
         await release();
       }
     };
-    const run = this.#queue.then(execute, execute);
+    const scoped = () => sessionContext.run(this.sessionId, execute);
+    const run = this.#queue.then(scoped, scoped);
     this.#queue = run.catch(() => {});
     return run;
   }
@@ -1370,16 +1382,14 @@ export class ChatGPTBrowser {
     }
 
     this.#context.setDefaultTimeout(ACTION_TIMEOUT_MS);
-    this.#page =
-      this.#context.pages().find((page) => /chatgpt\.com/i.test(page.url())) ||
-      this.#context.pages()[0] ||
-      (await this.#context.newPage());
+    const runtime = await readRuntimeState();
+    this.#page = await sessionPage(this.#context, {
+      sessionId: this.sessionId, bindings: runtime.sessionTabs, url: CHATGPT_URL,
+      persist: (sessionTabs) => updateRuntimeState({ sessionTabs }),
+      beforeCreate: () => this.siteAction('open-chatgpt'),
+    });
     const trackPage = (page) => {
-      if (/chatgpt\.com/i.test(page.url())) this.#page = page;
       this.attachNetworkDiagnostics(page);
-      page.on("framenavigated", (frame) => {
-        if (frame === page.mainFrame() && /chatgpt\.com/i.test(frame.url())) this.#page = page;
-      });
     };
     this.#context.pages().forEach(trackPage);
     this.#context.on("page", trackPage);

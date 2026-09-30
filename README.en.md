@@ -1,5 +1,14 @@
 # ChatGPT & Gemini Web MCP
 
+## Parallel sessions (0.7.0)
+
+Pass distinct `session_id` values to `chat_send` for independent tabs and
+concurrent answers on the same ChatGPT or Gemini account. Task recovery and
+cancellation stay scoped to the originating session; account throttling and
+rate limits remain shared. ChatGPT also accepts verified `answer_tier: "Pro"`
+and `web_search: true`. Restart all MCP connections after upgrading; see
+[parallel-session usage and compatibility](docs/PARALLEL_SESSIONS.md).
+
 A unified MCP server for the ChatGPT and Gemini web interfaces, with multi-model comparisons, durable tasks, restart recovery, and local status management. Each provider uses a separate browser sign-in environment; no API key is required.
 
 ## Multi-model comparisons and managed installation (0.6.0)

@@ -4,6 +4,12 @@
 
 [English](README.en.md)
 
+## 同平台任务并行（0.7.0）
+
+为不同研究任务传入不同的 `session_id`，即可在同一 ChatGPT 或 Gemini 登录环境中使用独立标签页并行生成回答。每个任务仍有自己的 `task_id`，支持进程重连后恢复读取；一个任务未确认，不会占用其他会话。页面操作和账号限流仍统一协调。
+
+`chat_send` 新增 `session_id`、`model`、`answer_tier` 和 `web_search`；ChatGPT 可直接选择并核验 `answer_tier: "Pro"`。使用方法、旧任务兼容及升级要求见 [并行会话文档](docs/PARALLEL_SESSIONS.md)。更新后请重启所有 MCP 连接。
+
 ## 同题多模型与安装维护（0.6.0）
 
 - `chat_compare`：同一问题发送给明确指定的 2–6 个平台/模型组合，分别返回答案。跨平台可并行，同一平台的多个模型依次在新对话中执行，支持重启恢复与防重复发送。

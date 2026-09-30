@@ -26,7 +26,7 @@ export async function diagnose(kernel, ids = [...kernel.providers.keys()]) {
     try {
       const runtime = await localState(config.runtimeState);
       check('runtime_state', runtime.circuitBreaker?.active ? 'warn' : 'pass', runtime.circuitBreaker?.active ? 'RATE_LIMITED' : 'READABLE', runtime.circuitBreaker?.active ? 'Wait for manual provider recovery; never automatically retry.' : 'none');
-      if (runtime.pending || runtime.activeGeneration?.active) check('provider_pending', 'warn', 'PENDING', 'Inspect the existing answer before sending a new request.');
+      if (runtime.pending || runtime.activeGeneration?.active || Object.values(runtime.sessions || {}).some(s => s.pending || s.activeGeneration?.active)) check('provider_pending', 'warn', 'PENDING', 'Inspect existing answers before switching installed versions. New work can use an independent session_id.');
     } catch { check('runtime_state', 'fail', 'UNREADABLE_STATE', 'Inspect the local state privately; do not delete it to retry.'); }
     try {
       const browser = await localState(config.browserState);
@@ -47,7 +47,8 @@ export async function diagnose(kernel, ids = [...kernel.providers.keys()]) {
       const journal = validateJournal(await readState(path.join(kernel.directory, id, 'tasks.json')), id);
       const counts = {};
       for (const task of Object.values(journal.tasks)) counts[task.state] = (counts[task.state] || 0) + 1;
-      checks.push({ name: 'task_journal', status: journal.active ? 'warn' : 'pass', code: journal.active ? 'TASK_ACTIVE' : 'READABLE', counts, active_state: journal.active ? journal.tasks[journal.active].state : null, action: journal.active ? 'Use chat_tasks, then chat_result for the active task. Do not resend.' : 'none' });
+      const active = Object.values(journal.tasks).filter(t => !['completed', 'cancelled', 'failed', 'abandoned'].includes(t.state));
+      checks.push({ name: 'task_journal', status: active.length ? 'warn' : 'pass', code: active.length ? 'TASK_ACTIVE' : 'READABLE', counts, active_count: active.length, active_state: journal.active ? journal.tasks[journal.active].state : null, action: active.length ? 'Use chat_tasks, then chat_result for existing tasks. Independent work may use a new session_id; do not resend uncertain work.' : 'none' });
     } catch { check('task_journal', 'fail', 'INVALID_JOURNAL', 'Inspect and restore the local journal privately; preserve duplicate-request records.'); }
     return { provider: id, ok: !checks.some((item) => item.status === 'fail'), checks };
   }));

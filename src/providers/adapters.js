@@ -15,7 +15,7 @@ export function geminiProvider(browser) {
   return {
     id: 'gemini', browser,
     localConfig: browser.config,
-    capabilities: { files: true, models: true, history: true, archive: 'loaded-messages', cancellation: true },
+    capabilities: { files: true, models: true, history: true, archive: 'loaded-messages', cancellation: true, sessions: true },
     isRoot: (url) => url === 'https://gemini.google.com/app',
     async prepare() {
       await browser.editable({ empty: true });
@@ -41,9 +41,9 @@ export function chatgptProvider(browser) {
   return {
     id: 'chatgpt', browser,
     localConfig: { executable: CHROME_EXECUTABLE, browserState: BROWSER_STATE_FILE, runtimeState: RUNTIME_STATE_FILE, operationLock: OPERATION_LOCK_FILE },
-    capabilities: { files: true, models: true, history: true, archive: 'provider-transcript', cancellation: true },
+    capabilities: { files: true, models: true, history: true, archive: 'provider-transcript', cancellation: true, sessions: true },
     isRoot: (url) => url === 'https://chatgpt.com',
-    isProvisional: (url) => /^\/c\/WEB:[^/]+$/.test(decodeURIComponent(new URL(url).pathname)),
+    isProvisional: (url) => /^\/c\/(?:WEB:|local-chatgpt:)[^/]+$/.test(decodeURIComponent(new URL(url).pathname)),
     async prepare() {
       await browser.assertActionsAllowed('chat_send');
       await browser.ensureSignedIn();

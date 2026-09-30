@@ -4,6 +4,7 @@ export function recoveryFor(task) {
     return { action: 'none', automatic_retry: false, message: 'Tracking finished. Reusing the request_id will return this record without sending.' };
   }
   const code = task.error?.code;
+  if (code === 'SESSION_TAB_MISSING') return { action: 'inspect_session_tab', automatic_retry: false, message: 'The bound session tab is missing. Do not resend. Inspect the saved conversation manually; use another session only for independent new work.' };
   if (code === 'CONVERSATION_CHANGED') return { action: 'return_to_conversation', automatic_retry: false, message: 'Manually open the saved conversation in the dedicated browser, then call chat_result.' };
   if (code === 'RATE_LIMITED') return { action: 'wait_for_manual_recovery', automatic_retry: false, message: 'Wait for the provider limit to clear. Confirm recovery before clearing its circuit breaker, then resume this task.' };
   if (code === 'LOGIN_REQUIRED') return { action: 'manual_login', automatic_retry: false, message: 'Sign in manually in the dedicated browser, then resume this task. Never provide credentials to a tool.' };

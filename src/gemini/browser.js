@@ -5,6 +5,8 @@ import { setTimeout as delay } from "node:timers/promises";
 import { PersistentBrowser, WebUIError, acquireLock, readState, writeState, processAlive } from "../shared/persistent-browser.js";
 import { geminiConfig } from "./config.js";
 import { SELECTORS } from "./selectors.js";
+import { sessionPage, sessionView, mergeSessionView, validateSessionId } from '../shared/sessions.js';
+const SESSION_FIELDS = ['pending', 'selectedURL'];
 
 // Gemini renders prompt lines with layout whitespace different from Quill's
 // composer. Normalize only the acknowledgement hash; draft checks stay exact.
@@ -28,7 +30,8 @@ export function isResponseFailure(text = '') {
 }
 
 export class GeminiBrowser {
-  constructor(config = geminiConfig(), runtime = new PersistentBrowser(config)) {
+  constructor(config = geminiConfig(), runtime = new PersistentBrowser(config), { sessionId } = {}) {
+    this.sessionId = validateSessionId(sessionId);
     this.config = config; this.runtime = runtime; this.queue = Promise.resolve();
     this.currentPage = null; this.signal = undefined; this.networkLimited = false;
   }
@@ -52,24 +55,28 @@ export class GeminiBrowser {
   }
 
   async close() { await this.runtime.disconnect(); this.currentPage = null; }
-  async state() { return readState(this.config.runtimeState); }
-  async update(fields) { const value = { ...await this.state(), ...fields }; await writeState(this.config.runtimeState, value); return value; }
+  async state() { return sessionView(await readState(this.config.runtimeState), this.sessionId, SESSION_FIELDS); }
+  async update(fields) {
+    const raw = await readState(this.config.runtimeState);
+    const value = { ...sessionView(raw, this.sessionId, SESSION_FIELDS), ...fields };
+    await writeState(this.config.runtimeState, mergeSessionView(raw, value, this.sessionId, SESSION_FIELDS));
+    return value;
+  }
 
   async page() {
     this.signal?.throwIfAborted();
     if (this.currentPage && !this.currentPage.isClosed()) return this.currentPage;
     const context = await this.runtime.connect(this.signal);
     const state = await this.state();
-    const pages = context.pages().filter((p) => {
-      try { return new URL(p.url()).origin === "https://gemini.google.com"; } catch { return false; }
+    const page = await sessionPage(context, {
+      sessionId: this.sessionId, bindings: state.sessionTabs, url: this.config.url,
+      persist: (sessionTabs) => this.update({ sessionTabs }),
+      beforeCreate: async () => {
+        await this.check();
+        if (context.pages().some((p) => p.url().startsWith('https://accounts.google.com/'))) throw new WebUIError('LOGIN_REQUIRED', 'Complete Google sign-in in the dedicated Gemini browser.');
+        await this.throttle('change');
+      },
     });
-    if (pages.length > 1 && !pages.some((p) => p.url() === state.selectedURL)) throw new WebUIError("AMBIGUOUS_TAB", "Multiple Gemini tabs are open. Leave one Gemini tab open in the dedicated browser.");
-    let page = pages.find((p) => p.url() === state.selectedURL) || pages[0];
-    if (!page) {
-      if (context.pages().some((p) => p.url().startsWith("https://accounts.google.com/"))) throw new WebUIError("LOGIN_REQUIRED", "Complete Google sign-in in the dedicated Gemini browser.");
-      page = await context.newPage();
-      await page.goto(this.config.url, { waitUntil: "domcontentloaded" });
-    }
     this.currentPage = page;
     page.on("response", (response) => {
       const url = new URL(response.url());

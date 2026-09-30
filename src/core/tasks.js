@@ -5,6 +5,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import { acquireLock, readState, writeState, WebUIError } from '../shared/persistent-browser.js';
 import { recoveryFor } from './recovery.js';
+import { validateSessionId } from '../shared/sessions.js';
 
 export const textHash = (text = '') => createHash('sha256').update(text.replace(/\s+/g, ' ').trim()).digest('hex');
 const fingerprint = (value) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
@@ -17,20 +18,44 @@ export function taskView(task) {
 
 export function validateJournal(raw, id) {
   const state = raw && typeof raw === 'object' && !Array.isArray(raw) && Object.keys(raw).length === 0 ? { version: 1, active: null, tasks: {} } : raw;
-  if (!state || state.version !== 1 || !state.tasks || typeof state.tasks !== 'object' || Array.isArray(state.tasks) ||
+  if (!state || ![1, 2].includes(state.version) || !state.tasks || typeof state.tasks !== 'object' || Array.isArray(state.tasks) ||
       (state.active !== null && (typeof state.active !== 'string' || !state.tasks[state.active] || terminal.has(state.tasks[state.active].state))) ||
       Object.entries(state.tasks).some(([key, task]) => !task || task.task_id !== key || task.provider !== id ||
         !['preparing', 'submitting', 'submitted', 'running', 'uncertain', ...terminal].includes(task.state) ||
-        (!terminal.has(task.state) && state.active !== key))) throw new WebUIError('INVALID_JOURNAL', 'Unsupported or damaged task journal; nothing was sent.');
+        (state.version === 1 && task.session_id !== undefined) ||
+        (!terminal.has(task.state) && !task.session_id && state.active !== key))) throw new WebUIError('INVALID_JOURNAL', 'Unsupported or damaged task journal; nothing was sent.');
+  const scopes = new Set();
+  for (const task of Object.values(state.tasks)) {
+    try { validateSessionId(task.session_id); } catch { throw new WebUIError('INVALID_JOURNAL', 'Invalid task session.'); }
+    if (!terminal.has(task.state)) {
+      const scope = task.session_id || '';
+      if (scopes.has(scope)) throw new WebUIError('INVALID_JOURNAL', 'Multiple active tasks share one session.');
+      scopes.add(scope);
+    }
+  }
+  if (state.active && state.tasks[state.active].session_id) throw new WebUIError('INVALID_JOURNAL', 'Invalid legacy active task.');
   return state;
 }
 
-// One durable journal and lock per provider. No global lock: providers can run
-// independently, while legacy and unified tools share the same provider gate.
+const activeIn = (state, sessionId) => Object.values(state.tasks).find(t => !terminal.has(t.state) && t.session_id === sessionId);
+const releaseTask = (state, task) => { if (state.active === task.task_id) state.active = null; };
+
+// Journal and brief UI operations are serialized per provider. Generation and
+// task occupancy are isolated by session; result waits release the lock.
 export class TaskKernel {
   constructor(providers, { directory = process.env.WEB_CHAT_DATA_DIR || path.join(os.homedir(), '.web-chat-mcp') } = {}) {
     this.providers = new Map(providers.map((provider) => [provider.id, provider]));
     this.directory = path.resolve(directory);
+    this.sessions = new Map();
+  }
+  adapter(id, sessionId) {
+    const provider = this.provider(id);
+    validateSessionId(sessionId);
+    if (!sessionId) return provider;
+    if (!provider.forSession) throw new WebUIError('SESSIONS_UNSUPPORTED', 'This provider does not support isolated sessions.');
+    const key = `${id}:${sessionId}`;
+    if (!this.sessions.has(key)) this.sessions.set(key, provider.forSession(sessionId));
+    return this.sessions.get(key);
   }
   provider(id) {
     const provider = this.providers.get(id);
@@ -44,7 +69,7 @@ export class TaskKernel {
   async locked(id, fn, signal) {
     this.provider(id);
     const file = path.join(this.directory, id, 'tasks.json');
-    const release = await acquireLock(`${file}.lock`, { signal, timeout: 20000 });
+    const release = await acquireLock(`${file}.lock`, { signal, timeout: 180000 });
     try {
       const raw = await readState(file);
       const state = validateJournal(raw, id);
@@ -52,30 +77,37 @@ export class TaskKernel {
       return await fn(state, save);
     } finally { await release(); }
   }
-  async run(id, fn, { signal, readOnly = false, name = 'unified-operation' } = {}) {
+  async run(id, fn, { signal, readOnly = false, name = 'unified-operation', sessionId } = {}) {
+    const adapter = this.adapter(id, sessionId);
     return this.locked(id, async (state) => {
-      if (state.active && !readOnly) throw new WebUIError('TASK_ACTIVE', `Provider has task ${state.active}. Use chat_result or chat_cancel before changing its page.`);
-      return this.provider(id).browser.runExclusive(fn, { signal, name });
+      const active = activeIn(state, sessionId);
+      if (active && !readOnly) throw new WebUIError('TASK_ACTIVE', `Session has task ${active.task_id}. Use chat_result or chat_cancel, or use a different session_id for independent work.`);
+      return adapter.browser.runExclusive(() => fn(adapter.browser), { signal, name });
     }, signal);
   }
-  async send({ provider: id, request_id, prompt, files = [], model, newConversation = false }, { signal } = {}) {
+  async send({ provider: id, request_id, prompt, files = [], model, newConversation = false, session_id, answer_tier, web_search = false }, { signal } = {}) {
+    const adapter = this.adapter(id, session_id);
     if (typeof request_id !== 'string' || !request_id.trim() || request_id.length > 128) throw new WebUIError('INVALID_REQUEST_ID', 'A nonempty request_id of at most 128 characters is required. Reuse it after a timeout.');
     if (typeof prompt !== 'string' || !prompt.trim()) throw new WebUIError('EMPTY_PROMPT', 'Prompt must not be blank.');
     if (!Array.isArray(files) || files.length > 10 || files.some((file) => typeof file !== 'string' || !path.isAbsolute(file))) throw new WebUIError('INVALID_FILES', 'Use at most ten absolute local file paths.');
     const requestHash = fingerprint(request_id);
     if (model !== undefined && (typeof model !== 'string' || !model.trim())) throw new WebUIError('INVALID_MODEL', 'model must be a nonempty exact name.');
-    const payloadHash = fingerprint({ prompt, files, ...(model ? { model } : {}), ...(newConversation ? { newConversation: true } : {}) });
+    if (answer_tier !== undefined && (typeof answer_tier !== 'string' || !answer_tier.trim())) throw new WebUIError('INVALID_TIER', 'answer_tier must be an exact available tier.');
+    if (typeof web_search !== 'boolean') throw new WebUIError('INVALID_SEARCH', 'web_search must be a boolean.');
+    if ((answer_tier || web_search) && id !== 'chatgpt') throw new WebUIError('UNSUPPORTED_SETTING', 'answer_tier and web_search currently require ChatGPT.');
+    const payloadHash = fingerprint({ prompt, files, ...(model ? { model } : {}), ...(newConversation ? { newConversation: true } : {}), ...(session_id ? { session_id } : {}), ...(answer_tier ? { answer_tier } : {}), ...(web_search ? { web_search } : {}) });
     return this.locked(id, async (state, save) => {
       const existing = Object.values(state.tasks).find((task) => task.requestHash === requestHash);
       if (existing) {
         if (existing.fingerprint !== payloadHash) throw new WebUIError('IDEMPOTENCY_CONFLICT', 'This request_id was already used with different content.');
         return { ...taskView(existing), replayed: true };
       }
-      if (state.active) throw new WebUIError('TASK_ACTIVE', `Provider has task ${state.active}; do not resend.`);
-      const task = { task_id: `${id}:${randomUUID()}`, provider: id, state: 'preparing', requestHash, fingerprint: payloadHash, promptHash: textHash(prompt), created_at: Date.now(), updated_at: Date.now(), blocking: true, response: null, error: null };
-      state.tasks[task.task_id] = task; state.active = task.task_id;
+      const active = activeIn(state, session_id);
+      if (active) throw new WebUIError('TASK_ACTIVE', `Session has task ${active.task_id}; do not resend. Use a different session_id for independent work.`);
+      const task = { task_id: `${id}:${randomUUID()}`, provider: id, ...(session_id ? { session_id } : {}), state: 'preparing', requestHash, fingerprint: payloadHash, promptHash: textHash(prompt), created_at: Date.now(), updated_at: Date.now(), blocking: true, response: null, error: null };
+      state.tasks[task.task_id] = task;
+      if (session_id) state.version = 2; else state.active = task.task_id;
       await save();
-      const adapter = this.provider(id);
       try {
         for (const file of files) {
           if (!(await fs.stat(file)).isFile()) throw new WebUIError('INVALID_FILES', 'Attachment must be a regular file.');
@@ -85,6 +117,12 @@ export class TaskKernel {
           if (newConversation) await adapter.browser.newChat();
           if (model) await adapter.browser.selectModel(model);
           task.baseline = await adapter.prepare();
+          const baselineURL = canonicalURL(task.baseline.url);
+          if (!adapter.isRoot(baselineURL) && !adapter.isProvisional?.(baselineURL) && Object.values(state.tasks).some(other => other.task_id !== task.task_id && !terminal.has(other.state) && [other.conversation_url, other.baseline?.url].some(url => url && canonicalURL(url) === baselineURL))) {
+            throw new WebUIError('CONVERSATION_ACTIVE', 'Another session has an active task in this conversation. Use a new conversation for independent work.');
+          }
+          if (answer_tier) task.answer_tier = await adapter.browser.selectAnswerTier(answer_tier);
+          if (web_search) await adapter.browser.enableWebSearch();
           // Persist before the first possible send. A crash from this point on
           // must be reconciled from the page, never retried automatically.
           task.state = 'submitting'; task.updated_at = Date.now(); await save();
@@ -97,7 +135,7 @@ export class TaskKernel {
         task.state = task.state === 'preparing' ? 'failed' : 'uncertain';
         task.blocking = task.state !== 'failed';
         task.error = { code: error.code || (signal?.aborted ? 'INTERRUPTED' : 'PROVIDER_ERROR'), message: error.message.split('\n')[0] };
-        task.updated_at = Date.now(); if (!task.blocking) state.active = null;
+        task.updated_at = Date.now(); if (!task.blocking) releaseTask(state, task);
         await save();
       }
       return taskView(task);
@@ -110,10 +148,10 @@ export class TaskKernel {
       if (!task) throw new WebUIError('TASK_NOT_FOUND', 'Task not found.');
       if (terminal.has(task.state)) return taskView(task);
       if (task.state === 'preparing') {
-        task.state = 'failed'; task.blocking = false; state.active = null;
+        task.state = 'failed'; task.blocking = false; releaseTask(state, task);
         task.error = { code: 'PREFLIGHT_INTERRUPTED', message: 'Interrupted before sending. No automatic retry.' }; await save(); return taskView(task);
       }
-      const adapter = this.provider(id);
+      const adapter = this.adapter(id, task.session_id);
       try {
         await adapter.browser.runExclusive(async () => {
           const observed = await adapter.inspect();
@@ -130,13 +168,13 @@ export class TaskKernel {
           if (!adapter.isProvisional?.(url)) task.conversation_url = url;
           if (observed.complete && observed.responseCount > task.baseline.responseCount) {
             await adapter.settle();
-            task.state = 'completed'; task.blocking = false; state.active = null;
+            task.state = 'completed'; task.blocking = false; releaseTask(state, task);
             task.response = { text: observed.text, format: 'plain_text', complete: true, model: observed.model || null, url: observed.url };
           } else if (cancel) {
             if (!observed.busy) throw new WebUIError('CANCEL_UNCONFIRMED', 'No active generation control could be confirmed. Task remains reserved.');
             await adapter.cancel();
             await adapter.settle();
-            task.state = 'cancelled'; task.blocking = false; state.active = null;
+            task.state = 'cancelled'; task.blocking = false; releaseTask(state, task);
             task.response = { text: observed.text || '', format: 'plain_text', complete: false, model: observed.model || null, url: observed.url };
           } else task.state = observed.busy ? 'running' : 'submitted';
           task.error = null;
@@ -167,17 +205,18 @@ export class TaskKernel {
       const task = state.tasks[taskId];
       if (!task) throw new WebUIError('TASK_NOT_FOUND', 'Task not found.');
       if (terminal.has(task.state)) return taskView(task);
-      await this.provider(id).browser.runExclusive(async () => {
-        const adapter = this.provider(id);
+      const adapter = this.adapter(id, task.session_id);
+      await adapter.browser.runExclusive(async () => {
         const observed = await adapter.inspect({ allowPageError: true });
-        const expected = task.conversation_url || task.baseline?.url;
+        const saved = task.conversation_url;
+        const expected = saved && !adapter.isProvisional?.(saved) ? saved : task.baseline?.url;
         if (!expected || (canonicalURL(observed.url) !== canonicalURL(expected) && !adapter.isRoot(canonicalURL(expected)))) throw new WebUIError('CONVERSATION_CHANGED', 'Return to the original page before abandoning tracking.');
         if (observed.busy) throw new WebUIError('GENERATING', 'Generation is active. Use chat_cancel for the verified task.');
         await adapter.settle();
       }, { signal, name: 'chat_abandon' });
       task.state = 'abandoned'; task.blocking = false; task.updated_at = Date.now();
       task.error = { code: 'TRACKING_ABANDONED', message: 'Tracking explicitly abandoned. Delivery and completion are not asserted; the request_id remains reserved.' };
-      state.active = null; await save(); return taskView(task);
+      releaseTask(state, task); await save(); return taskView(task);
     }, signal);
   }
   async list(id, limit = 20, { offset = 0, state: filter } = {}) {
@@ -185,7 +224,7 @@ export class TaskKernel {
     if (filter && !['preparing', 'submitting', 'submitted', 'running', 'uncertain', ...terminal].includes(filter)) throw new WebUIError('INVALID_STATE', 'Unknown task state.');
     return this.locked(id, async (state) => {
       const tasks = Object.values(state.tasks).filter((task) => !filter || task.state === filter).sort((a, b) => b.created_at - a.created_at || a.task_id.localeCompare(b.task_id));
-      return { provider: id, active_task: state.active, total: tasks.length, offset, next_offset: offset + limit < tasks.length ? offset + limit : null, tasks: tasks.slice(offset, offset + limit).map((task) => {
+      return { provider: id, active_task: state.active, active_tasks: Object.values(state.tasks).filter(t => !terminal.has(t.state)).map(t => ({ task_id: t.task_id, session_id: t.session_id || null, state: t.state })), total: tasks.length, offset, next_offset: offset + limit < tasks.length ? offset + limit : null, tasks: tasks.slice(offset, offset + limit).map((task) => {
         const view = taskView(task); delete view.response; return view;
       }) };
     });

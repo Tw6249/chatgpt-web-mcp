@@ -72,3 +72,34 @@ test("exited MCP owner releases its generation lock without reading the browser"
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test('ChatGPT session context isolates production runtime writes while preserving the account circuit breaker', async () => {
+  const root = path.resolve(tmpdir());
+  const directory = await mkdtemp(path.join(root, 'chatgpt-session-policy-'));
+  try {
+    await isolatedPolicyCheck(`
+      import assert from 'node:assert/strict';
+      import { readFile, writeFile } from 'node:fs/promises';
+      import { ChatGPTBrowser } from './src/browser.js';
+      import { RUNTIME_STATE_FILE } from './src/config.js';
+      const generation = { active: true, ownerPid: process.pid };
+      await writeFile(RUNTIME_STATE_FILE, JSON.stringify({activeGeneration:generation,sessions:{a:{activeGeneration:generation},b:{activeGeneration:generation}}}));
+      const a = new ChatGPTBrowser({sessionId:'a'}), b = new ChatGPTBrowser({sessionId:'b'}), fresh = new ChatGPTBrowser({sessionId:'new'});
+      a.firstVisible = async () => null;
+      await a.runExclusive(() => a.settleManagedGeneration());
+      const read = async () => JSON.parse(await readFile(RUNTIME_STATE_FILE,'utf8'));
+      const state = await read();
+      assert.equal(state.activeGeneration.active,true);
+      assert.equal(state.sessions.b.activeGeneration.active,true);
+      assert.equal(state.sessions.a.activeGeneration,null);
+      await fresh.runExclusive(() => fresh.assertActionsAllowed());
+      await assert.rejects(b.runExclusive(() => b.assertActionsAllowed()), /生成任务/);
+      await writeFile(RUNTIME_STATE_FILE, JSON.stringify({...await read(),circuitBreaker:{active:true}}));
+      await assert.rejects(a.runExclusive(() => a.assertActionsAllowed()), /熔断/);
+      await assert.rejects(fresh.runExclusive(() => fresh.assertActionsAllowed()), /熔断/);
+    `, { CHATGPT_WEB_RUNTIME_STATE: path.join(directory, 'runtime.json'), CHATGPT_WEB_OPERATION_LOCK: path.join(directory, 'operation.lock') });
+  } finally {
+    if (path.dirname(directory) !== root) throw new Error('Unexpected test directory');
+    await rm(directory, { recursive: true, force: true });
+  }
+});
