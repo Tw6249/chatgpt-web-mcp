@@ -242,7 +242,7 @@ async function taskFixture(t) {
       return {
         url, userMessageCount: users.length, assistantMessageCount: assistants.length,
         lastUserMessage: users.at(-1)?.text || '', response: assistants.at(-1)?.text || '',
-        generating: assistants.length ? await f.streaming() : false,
+        generating: !!await f.page.locator(SELECTORS.stopButton.join(', ')).count() || (assistants.length ? await f.streaming() : false),
         model: 'offline-fixture',
       };
     },
@@ -307,4 +307,24 @@ test('wrong prompt cannot complete a durable task, and active semantic streaming
   assert.equal(result.state, 'completed');
   assert.equal(f.sends(), 1);
   assert.equal(f.settled(), 1);
+});
+
+test('plain Chinese stop control prevents an interim Pro reasoning summary from completing', async t => {
+  const f = await taskFixture(t); const task = await f.kernel.send(f.input);
+  await f.page.setContent(html(newUser('u1', f.input.prompt) + newAssistant('a1', '构造了反例') + '<button aria-label="停止"></button>'));
+  const interim = await f.kernel.result(task.task_id);
+  assert.equal(interim.state, 'running'); assert.equal(interim.response, null);
+  await f.page.setContent(html(newUser('u1', f.input.prompt) + newAssistant('a1', 'Full research answer')));
+  assert.equal((await f.kernel.result(task.task_id)).response.text, 'Full research answer');
+  assert.equal(f.sends(), 1);
+});
+
+test('reasoning markdown without a semantic answer unit is not a response, even before stop mounts', async t => {
+  const f = await taskFixture(t); const task = await f.kernel.send(f.input);
+  await f.page.setContent(html(newUser('u1', f.input.prompt) + '<div><div data-markdown-text-style="assistant-message" data-markdown-text-tone="primary">Research commentary</div><div data-markdown-text-style="assistant-message" data-markdown-text-tone="tertiary">构造了反例</div></div>'));
+  assert.equal((await f.provider.inspect()).responseCount, 0);
+  const interim = await f.kernel.result(task.task_id);
+  assert.equal(interim.state, 'submitted'); assert.equal(interim.response, null);
+  await f.page.setContent(html(newUser('u1', f.input.prompt) + newAssistant('a1', 'Actual answer')));
+  assert.equal((await f.kernel.result(task.task_id)).response.text, 'Actual answer');
 });

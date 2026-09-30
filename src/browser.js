@@ -54,7 +54,7 @@ import { SELECTORS, TEXT } from "./selectors.js";
 // mentioning the word "thinking" is not discarded.
 const THINKING_WRAPPER_RE = /^\s*(?:thinking|思考)(?:\s*(?:[.…:：]|$))/iu;
 const sessionContext = new AsyncLocalStorage();
-const SESSION_FIELDS = ['activeGeneration'];
+const SESSION_FIELDS = ['activeGeneration', 'sessionInitialized'];
 
 function normalize(value) {
   return String(value || "")
@@ -1408,6 +1408,13 @@ export class ChatGPTBrowser {
     if (openedChatGPTPage && PAGE_STARTUP_DELAY_MS > 0) {
       await this.#page.waitForLoadState("domcontentloaded", { timeout: ACTION_TIMEOUT_MS });
       await waitWithAbort(PAGE_STARTUP_DELAY_MS, this.signal());
+    }
+
+    // Some deployments redirect the root URL to the last conversation. A
+    // fresh tab alone is not a fresh chat; initialize once through the UI.
+    if (this.sessionId && !runtime.sessionInitialized && !runtime.sessionTabs?.[this.sessionId]) {
+      await this.newChat();
+      await updateRuntimeState({ sessionInitialized: true });
     }
 
     return this.#page;
@@ -4404,6 +4411,33 @@ export class ChatGPTBrowser {
       // cannot be blocked by a stale global-search dialog.
       await this.keyboardPress(page, "Escape", "close-history-search").catch(() => {});
     }
+  }
+
+  async waitForConversationURL() {
+    const page = await this.page();
+    await page.waitForURL(url => url.origin === new URL(CHATGPT_URL).origin && /^\/c\/[a-zA-Z0-9-]+$/.test(url.pathname), { timeout: 20000 }).catch(error => {
+      if (error.name !== 'TimeoutError') throw error;
+    });
+    return page.url();
+  }
+
+  // Task observation may restore its verified conversation while generation
+  // continues remotely. It never stops, resends or clears generation state.
+  async restoreTaskConversation(url) {
+    const destination = new URL(url);
+    if (destination.origin !== new URL(CHATGPT_URL).origin || !/^\/c\/[a-zA-Z0-9-]+$/.test(destination.pathname) || destination.search || destination.hash) throw new ChatGPTWebError('Invalid task conversation URL.');
+    const page = await this.page();
+    if (page.url().replace(/\/$/, '') === destination.href.replace(/\/$/, '')) return;
+    const composer = await this.composer();
+    if (composer && (await this.composerText(composer)).trim()) throw new ChatGPTWebError('Task restore would replace a draft; preserve the draft before resuming.');
+    const pendingFiles = await page.locator(SELECTORS.fileInput.join(', ')).evaluateAll(inputs => inputs.reduce((n, input) => n + Number(input.files?.length || 0), 0));
+    if (pendingFiles) throw new ChatGPTWebError('Task restore would replace pending attachments.');
+    const runtime = await readRuntimeState();
+    if (runtime.circuitBreaker?.active) throw new ChatGPTWebError('Rate-limit circuit breaker is active.');
+    await this.pageInteraction('restore-task-conversation');
+    await navigate(page, destination.href, { waitUntil: 'domcontentloaded' }, this.signal());
+    await page.locator(SELECTORS.userMessages.join(', ')).first().waitFor({ state: 'visible', timeout: ACTION_TIMEOUT_MS });
+    this.#settingsCache = null;
   }
 
   async selectHistory({ conversationId, url, title } = {}) {

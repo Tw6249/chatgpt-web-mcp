@@ -23,6 +23,7 @@ export const SELECTORS = {
     "button[aria-label='停止生成']",
     "button[aria-label='停止回答']",
     "button[aria-label='停止响应']",
+    "button[aria-label='停止']",
   ],
   assistantMessages: [
     "[data-message-author-role='assistant']",
@@ -36,7 +37,9 @@ export const SELECTORS = {
     // September 2026 layouts expose semantic content nodes instead of role
     // wrappers. Read the answer body, not its accessible heading or controls.
     // Exclude legacy ancestors so mixed layouts still count each message once.
-    "[data-markdown-text-style='assistant-message']:not([data-message-author-role='assistant'] *):not(article[data-turn='assistant'] *):not(section[data-turn='assistant'] *)",
+    // Reasoning summaries reuse the same markdown style. A final message also
+    // belongs to a semantic assistant unit; style alone is not an answer.
+    ":is([data-chatgpt-search-unit-key$=':assistant'], [data-content-search-unit-key$=':assistant'], [data-chatgpt-selection-message-id]) [data-markdown-text-style='assistant-message']:not([data-message-author-role='assistant'] *):not(article[data-turn='assistant'] *):not(section[data-turn='assistant'] *)",
   ],
   userMessages: [
     "[data-message-author-role='user']",

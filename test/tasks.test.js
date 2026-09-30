@@ -123,3 +123,45 @@ test('abandon requires confirmation and idle original page; request id remains r
   assert.equal((await f.kernel.abandon(task.task_id, { confirm: true })).state, 'abandoned');
   assert.equal((await f.kernel.send(f.input)).replayed, true); assert.equal(f.sends(), 1);
 });
+
+test('explicit result refresh corrects a premature completion and preserves the old observation', async t => {
+  const f = await fixture(t); const task = await f.kernel.send(f.input);
+  Object.assign(f.page, { responseCount: 1, busy: false, complete: true, text: 'reasoning summary' });
+  assert.equal((await f.kernel.result(task.task_id)).state, 'completed');
+  Object.assign(f.page, { busy: true, complete: false });
+  const refreshed = await f.kernel.result(task.task_id, { refresh: true });
+  assert.equal(refreshed.state, 'running'); assert.equal(refreshed.response, null);
+  assert.equal(refreshed.previous_response.text, 'reasoning summary');
+  assert.equal((await f.kernel.list('gemini')).active_task, task.task_id);
+  await assert.rejects(f.kernel.send({ ...f.input, request_id: 'second' }), { code: 'TASK_ACTIVE' });
+  Object.assign(f.page, { busy: false, complete: true, text: 'full answer' });
+  assert.equal((await f.kernel.result(task.task_id)).response.text, 'full answer');
+  assert.equal(f.sends(), 1);
+});
+
+test('refresh cannot steal a session already used by another task', async t => {
+  const f = await fixture(t); const task = await f.kernel.send(f.input);
+  Object.assign(f.page, { responseCount: 1, busy: false, complete: true, text: 'done' });
+  await f.kernel.result(task.task_id);
+  await f.kernel.send({ ...f.input, request_id: 'later' });
+  await assert.rejects(f.kernel.result(task.task_id, { refresh: true }), { code: 'TASK_SUPERSEDED' });
+  assert.equal((await f.kernel.result(task.task_id)).response.text, 'done');
+});
+
+test('unbound recovery URL is checked against the prompt before binding', async t => {
+  const f = await fixture(t, 'chatgpt');
+  f.page.url = 'https://example.com'; f.adapter.isRoot = url => url === 'https://example.com';
+  const originalSend = f.adapter.send;
+  f.adapter.send = async i => { await originalSend(i); return { url: f.page.url }; };
+  f.adapter.restore = async url => { f.page.url = url; };
+  const task = await f.kernel.send(f.input);
+  assert.equal(task.conversation_url, undefined);
+  f.page.lastUser = 'different prompt';
+  const wrong = await f.kernel.result(task.task_id, { conversation_url: 'https://example.com/wrong' });
+  assert.equal(wrong.error.code, 'SEND_UNCONFIRMED'); assert.equal(wrong.conversation_url, undefined);
+  f.page.lastUser = f.input.prompt;
+  const recovered = await f.kernel.result(task.task_id, { conversation_url: 'https://example.com/original' });
+  assert.equal(recovered.state, 'running'); assert.equal(recovered.conversation_url, 'https://example.com/original');
+  assert.equal((await f.kernel.result(task.task_id, { conversation_url: 'https://example.com/wrong' })).error.code, 'CONVERSATION_CONFLICT');
+  assert.equal(f.sends(), 1);
+});

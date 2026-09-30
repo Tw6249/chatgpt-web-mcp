@@ -6,7 +6,7 @@ import { PersistentBrowser, WebUIError, acquireLock, readState, writeState, proc
 import { geminiConfig } from "./config.js";
 import { SELECTORS } from "./selectors.js";
 import { sessionPage, sessionView, mergeSessionView, validateSessionId } from '../shared/sessions.js';
-const SESSION_FIELDS = ['pending', 'selectedURL'];
+const SESSION_FIELDS = ['pending', 'selectedURL', 'sessionInitialized'];
 
 // Gemini renders prompt lines with layout whitespace different from Quill's
 // composer. Normalize only the acknowledgement hash; draft checks stay exact.
@@ -82,6 +82,10 @@ export class GeminiBrowser {
       const url = new URL(response.url());
       if (url.origin === "https://gemini.google.com" && response.status() === 429) this.networkLimited = true;
     });
+    if (this.sessionId && !state.sessionInitialized && !state.sessionTabs?.[this.sessionId]) {
+      await this.newChat();
+      await this.update({ sessionInitialized: true });
+    }
     return page;
   }
 

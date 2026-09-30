@@ -77,12 +77,14 @@ export class TaskKernel {
       return await fn(state, save);
     } finally { await release(); }
   }
-  async run(id, fn, { signal, readOnly = false, name = 'unified-operation', sessionId } = {}) {
+  async run(id, fn, { signal, readOnly = false, name = 'unified-operation', sessionId, conversationChanged = false } = {}) {
     const adapter = this.adapter(id, sessionId);
-    return this.locked(id, async (state) => {
+    return this.locked(id, async (state, save) => {
       const active = activeIn(state, sessionId);
       if (active && !readOnly) throw new WebUIError('TASK_ACTIVE', `Session has task ${active.task_id}. Use chat_result or chat_cancel, or use a different session_id for independent work.`);
-      return adapter.browser.runExclusive(() => fn(adapter.browser), { signal, name });
+      const result = await adapter.browser.runExclusive(() => fn(adapter.browser), { signal, name });
+      if (conversationChanged && sessionId) { state.sessionNavigations = { ...state.sessionNavigations, [sessionId]: Date.now() }; await save(); }
+      return result;
     }, signal);
   }
   async send({ provider: id, request_id, prompt, files = [], model, newConversation = false, session_id, answer_tier, web_search = false }, { signal } = {}) {
@@ -104,6 +106,9 @@ export class TaskKernel {
       }
       const active = activeIn(state, session_id);
       if (active) throw new WebUIError('TASK_ACTIVE', `Session has task ${active.task_id}; do not resend. Use a different session_id for independent work.`);
+      if (adapter.restore && Object.values(state.tasks).some(t => !terminal.has(t.state) && !t.conversation_url && (!t.baseline?.url || adapter.isRoot(canonicalURL(t.baseline.url)) || adapter.isProvisional?.(t.baseline.url)))) {
+        throw new WebUIError('CONVERSATION_UNRESOLVED', 'An earlier send has no verified conversation address. Recover it with chat_result before changing the shared page selection. Do not resend it.');
+      }
       const task = { task_id: `${id}:${randomUUID()}`, provider: id, ...(session_id ? { session_id } : {}), state: 'preparing', requestHash, fingerprint: payloadHash, promptHash: textHash(prompt), created_at: Date.now(), updated_at: Date.now(), blocking: true, response: null, error: null };
       state.tasks[task.task_id] = task;
       if (session_id) state.version = 2; else state.active = task.task_id;
@@ -115,6 +120,10 @@ export class TaskKernel {
         }
         await adapter.browser.runExclusive(async () => {
           if (newConversation) await adapter.browser.newChat();
+          else if (session_id && adapter.restore) {
+            const previous = Object.values(state.tasks).filter(t => t.task_id !== task.task_id && t.session_id === session_id && t.conversation_url).sort((a, b) => b.created_at - a.created_at)[0];
+            if (previous && !(state.sessionNavigations?.[session_id] >= previous.created_at)) await adapter.restore(previous.conversation_url);
+          }
           if (model) await adapter.browser.selectModel(model);
           task.baseline = await adapter.prepare();
           const baselineURL = canonicalURL(task.baseline.url);
@@ -128,7 +137,10 @@ export class TaskKernel {
           task.state = 'submitting'; task.updated_at = Date.now(); await save();
           const sent = await adapter.send({ prompt, files });
           task.state = 'submitted'; task.submitted_at = Date.now(); task.updated_at = task.submitted_at;
-          if (sent.url && !adapter.isProvisional?.(sent.url) && canonicalURL(sent.url) !== canonicalURL(task.baseline.url)) task.conversation_url = canonicalURL(sent.url);
+          const acknowledgement = adapter.restore ? await adapter.inspect() : null;
+          const identityConfirmed = !acknowledgement || (acknowledgement.userCount === task.baseline.userCount + 1 && textHash(acknowledgement.lastUser) === task.promptHash);
+          const sentURL = acknowledgement?.url || sent.url;
+          if (identityConfirmed && sentURL && !adapter.isRoot(canonicalURL(sentURL)) && !adapter.isProvisional?.(sentURL)) task.conversation_url = canonicalURL(sentURL);
           await save();
         }, { signal, name: 'chat_send' });
       } catch (error) {
@@ -141,12 +153,20 @@ export class TaskKernel {
       return taskView(task);
     }, signal);
   }
-  async read(taskId, { signal, cancel = false } = {}) {
+  async read(taskId, { signal, cancel = false, refresh = false, conversation_url } = {}) {
     const id = this.taskProvider(taskId);
     return this.locked(id, async (state, save) => {
       const task = state.tasks[taskId];
       if (!task) throw new WebUIError('TASK_NOT_FOUND', 'Task not found.');
-      if (terminal.has(task.state)) return taskView(task);
+      const revalidate = refresh && task.state === 'completed' && !cancel;
+      if (terminal.has(task.state) && !revalidate) return taskView(task);
+      if (revalidate) {
+        if (Object.values(state.tasks).some(t => t.task_id !== taskId && t.session_id === task.session_id && (t.created_at >= task.created_at || !terminal.has(t.state)))) throw new WebUIError('TASK_SUPERSEDED', 'A later task uses this session. The cached result is preserved; inspect history separately.');
+        task.previous_response = task.response;
+        task.response = null; task.state = 'uncertain'; task.blocking = true;
+        if (!task.session_id) state.active = taskId;
+        await save();
+      }
       if (task.state === 'preparing') {
         task.state = 'failed'; task.blocking = false; releaseTask(state, task);
         task.error = { code: 'PREFLIGHT_INTERRUPTED', message: 'Interrupted before sending. No automatic retry.' }; await save(); return taskView(task);
@@ -154,11 +174,15 @@ export class TaskKernel {
       const adapter = this.adapter(id, task.session_id);
       try {
         await adapter.browser.runExclusive(async () => {
+          const saved = task.conversation_url;
+          const known = saved && !adapter.isProvisional?.(saved) ? saved : canonicalURL(task.baseline.url);
+          const unresolved = adapter.isRoot(known) || adapter.isProvisional?.(known);
+          if (conversation_url && !unresolved && canonicalURL(conversation_url) !== known) throw new WebUIError('CONVERSATION_CONFLICT', 'Recovery URL disagrees with the saved task conversation.');
+          const expected = conversation_url ? canonicalURL(conversation_url) : known;
+          const root = adapter.isRoot(expected) || adapter.isProvisional?.(expected);
+          if (!root && adapter.restore && (task.session_id || conversation_url || revalidate)) await adapter.restore(expected);
           const observed = await adapter.inspect();
           const url = canonicalURL(observed.url);
-          const saved = task.conversation_url;
-          const expected = saved && !adapter.isProvisional?.(saved) ? saved : canonicalURL(task.baseline.url);
-          const root = adapter.isRoot(expected);
           if (url !== expected && !root) throw new WebUIError('CONVERSATION_CHANGED', 'Open the task conversation before resuming it.');
           const acknowledged = observed.userCount === task.baseline.userCount + 1 && textHash(observed.lastUser) === task.promptHash;
           // UI acknowledgement may arrive after submitPrompt(wait:false).
@@ -176,7 +200,7 @@ export class TaskKernel {
             await adapter.settle();
             task.state = 'cancelled'; task.blocking = false; releaseTask(state, task);
             task.response = { text: observed.text || '', format: 'plain_text', complete: false, model: observed.model || null, url: observed.url };
-          } else task.state = observed.busy ? 'running' : 'submitted';
+          } else { task.state = observed.busy ? 'running' : 'submitted'; task.blocking = true; }
           task.error = null;
         }, { signal, name: cancel ? 'chat_cancel' : 'chat_result' });
       } catch (error) {
@@ -186,12 +210,13 @@ export class TaskKernel {
       task.updated_at = Date.now(); await save(); return taskView(task);
     }, signal);
   }
-  async result(taskId, { wait = false, timeoutMs = 30000, signal } = {}) {
+  async result(taskId, { wait = false, timeoutMs = 30000, signal, refresh = false, conversation_url } = {}) {
     if (!Number.isFinite(timeoutMs) || timeoutMs < 1000 || timeoutMs > 300000) throw new WebUIError('INVALID_TIMEOUT', 'timeoutMs must be between 1000 and 300000.');
     const deadline = Date.now() + timeoutMs;
     while (true) {
       signal?.throwIfAborted();
-      const task = await this.read(taskId, { signal });
+      const task = await this.read(taskId, { signal, refresh, conversation_url });
+      refresh = false;
       if (!wait || terminal.has(task.state) || task.state === 'uncertain' || Date.now() >= deadline) return { ...task, timed_out: wait && !terminal.has(task.state) && Date.now() >= deadline };
       // Release provider locks between observations so cancellation and status
       // from another process remain available. No background worker resends.

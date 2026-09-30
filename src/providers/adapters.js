@@ -44,6 +44,7 @@ export function chatgptProvider(browser) {
     capabilities: { files: true, models: true, history: true, archive: 'provider-transcript', cancellation: true, sessions: true },
     isRoot: (url) => url === 'https://chatgpt.com',
     isProvisional: (url) => /^\/c\/(?:WEB:|local-chatgpt:)[^/]+$/.test(decodeURIComponent(new URL(url).pathname)),
+    restore: (url) => browser.restoreTaskConversation(url),
     async prepare() {
       await browser.assertActionsAllowed('chat_send');
       await browser.ensureSignedIn();
@@ -57,7 +58,11 @@ export function chatgptProvider(browser) {
     async send({ prompt, files }) {
       if (files.length) await browser.uploadFiles(files);
       await browser.writePrompt(prompt);
-      return browser.submitPrompt({ wait: false, refresh: false });
+      const sent = await browser.submitPrompt({ wait: false, refresh: false });
+      // Keep the short submission operation locked until the permanent URL
+      // arrives, before another tab can synchronize the selected conversation.
+      if (browser.waitForConversationURL) sent.url = await browser.waitForConversationURL();
+      return sent;
     },
     async inspect() {
       const s = await browser.getLatestResponse({ includeTranscript: false });

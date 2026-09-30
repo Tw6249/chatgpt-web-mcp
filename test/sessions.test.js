@@ -92,6 +92,33 @@ test('changed tab identity cannot be cancelled or read as the other session', as
   assert.equal((await f.kernel.read(b.task_id)).state, 'running');
 });
 
+test('synchronized tab navigation restores each saved conversation before reading or cancelling', async t => {
+  const f = await fixture(t);
+  const a = await f.kernel.send(f.input('a')), b = await f.kernel.send(f.input('b'));
+  const snapshots = new Map([...f.pages.values()].map(page => [page.url, { ...page }]));
+  const restored = [];
+  for (const session of ['a', 'b']) f.kernel.adapter('chatgpt', session).restore = async url => {
+    restored.push(url);
+    for (const page of f.pages.values()) Object.assign(page, snapshots.get(url));
+  };
+  Object.assign(f.pages.get('a'), f.pages.get('b'));
+  assert.equal((await f.kernel.read(a.task_id)).state, 'running');
+  assert.equal((await f.kernel.read(b.task_id, { cancel: true })).state, 'cancelled');
+  assert.deepEqual(restored, [a.conversation_url, b.conversation_url]);
+  assert.deepEqual(f.cancelled, ['b']); assert.equal(f.sends.length, 2);
+});
+
+test('explicit navigation takes precedence over automatic follow-up restoration', async t => {
+  const f = await fixture(t); const a = await f.kernel.send(f.input('a'));
+  Object.assign(f.pages.get('a'), { responseCount: 1, text: 'done', busy: false, complete: true });
+  await f.kernel.result(a.task_id);
+  const adapter = f.kernel.adapter('chatgpt', 'a');
+  adapter.restore = async () => assert.fail('explicit new conversation must be preserved');
+  await f.kernel.run('chatgpt', async () => { f.pages.get('a').url = 'https://example.com/new'; }, { sessionId: 'a', conversationChanged: true });
+  const b = await f.kernel.send({ ...f.input('a'), request_id: 'a-new' });
+  assert.equal(b.state, 'submitted'); assert.equal(b.conversation_url, 'https://example.com/new');
+});
+
 test('different session names cannot submit into the same active conversation', async t => {
   const f = await fixture(t);
   await f.kernel.send(f.input('a'));

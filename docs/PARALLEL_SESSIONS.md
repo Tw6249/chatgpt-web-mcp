@@ -24,13 +24,21 @@ across the provider, not just inside a session.
 `chat_open` and `chat_archive` also accept `session_id`. `chat_result`,
 `chat_cancel` and `chat_abandon` recover it from the persisted task. Omitting
 `session_id` uses the unmanaged legacy tab, retaining its existing guards.
-An uncertain task blocks only its own session. It is never cleared to permit
-unrelated new work. Two tabs cannot submit into the same active conversation.
+An uncertain task with a known conversation blocks only its own session. It
+is never cleared to permit unrelated new work. A ChatGPT send whose permanent
+address is still unknown must first be recovered, because some deployments
+synchronize the selected conversation across tabs. Two tabs cannot submit
+into the same active conversation.
 
 ## Isolation and limits
 
 - Tabs are pinned by Chrome target ID, not active-tab order, page title or URL.
   Redirects and provisional conversation URLs do not change tab ownership.
+- New sessions explicitly initialize a fresh conversation. ChatGPT submission
+  waits briefly for its permanent address; reads and follow-ups restore the
+  saved conversation when the website has synchronized another tab's selection.
+  Prompt identity is checked again before accepting an answer or cancelling.
+  A draft, pending attachment or rate limit prevents restoration.
 - MCP process reconnects retain the binding and duplicate-send protection.
   A closed tab or restarted browser fails closed with `SESSION_TAB_MISSING`;
   no replacement tab is silently created and no prompt is resent. Inspect the
@@ -63,6 +71,16 @@ any task is active. Health/status APIs remain observations, not login proofs.
 This version also recognizes ChatGPT's `local-chatgpt:…` temporary URL. An old
 uncertain task can be reconciled by `chat_result` if the original page and
 expected user turn match; no abandoned tracking or repeated send is needed.
+
+For an unbound uncertain task, use `chat_result` with an observed
+`conversation_url` from its history entry. The URL is saved only after the
+expected user turn matches; a conflicting known URL is rejected. If an older
+release cached a reasoning summary as a completed answer, explicitly call
+`chat_result` with `refresh: true`. This revalidates only the latest task in
+that session, preserves `previous_response`, and resumes tracking if still
+generating. It never sends again. Ordinary reads still use the local cache.
+Chinese `停止` controls and reasoning-only markdown are recognized separately
+from final semantic answer messages.
 
 ## Verification
 
