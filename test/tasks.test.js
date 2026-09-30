@@ -132,6 +132,7 @@ test('explicit result refresh corrects a premature completion and preserves the 
   const refreshed = await f.kernel.result(task.task_id, { refresh: true });
   assert.equal(refreshed.state, 'running'); assert.equal(refreshed.response, null);
   assert.equal(refreshed.previous_response.text, 'reasoning summary');
+  assert.equal((await f.kernel.list('gemini')).tasks[0].previous_response, undefined, 'metadata listings must not expose archived response text');
   assert.equal((await f.kernel.list('gemini')).active_task, task.task_id);
   await assert.rejects(f.kernel.send({ ...f.input, request_id: 'second' }), { code: 'TASK_ACTIVE' });
   Object.assign(f.page, { busy: false, complete: true, text: 'full answer' });

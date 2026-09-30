@@ -106,7 +106,7 @@ export class TaskKernel {
       }
       const active = activeIn(state, session_id);
       if (active) throw new WebUIError('TASK_ACTIVE', `Session has task ${active.task_id}; do not resend. Use a different session_id for independent work.`);
-      if (adapter.restore && Object.values(state.tasks).some(t => !terminal.has(t.state) && !t.conversation_url && (!t.baseline?.url || adapter.isRoot(canonicalURL(t.baseline.url)) || adapter.isProvisional?.(t.baseline.url)))) {
+      if (adapter.restore && Object.values(state.tasks).some(t => !terminal.has(t.state) && (!t.conversation_url || adapter.isProvisional?.(t.conversation_url)) && (!t.baseline?.url || adapter.isRoot(canonicalURL(t.baseline.url)) || adapter.isProvisional?.(t.baseline.url)))) {
         throw new WebUIError('CONVERSATION_UNRESOLVED', 'An earlier send has no verified conversation address. Recover it with chat_result before changing the shared page selection. Do not resend it.');
       }
       const task = { task_id: `${id}:${randomUUID()}`, provider: id, ...(session_id ? { session_id } : {}), state: 'preparing', requestHash, fingerprint: payloadHash, promptHash: textHash(prompt), created_at: Date.now(), updated_at: Date.now(), blocking: true, response: null, error: null };
@@ -250,7 +250,7 @@ export class TaskKernel {
     return this.locked(id, async (state) => {
       const tasks = Object.values(state.tasks).filter((task) => !filter || task.state === filter).sort((a, b) => b.created_at - a.created_at || a.task_id.localeCompare(b.task_id));
       return { provider: id, active_task: state.active, active_tasks: Object.values(state.tasks).filter(t => !terminal.has(t.state)).map(t => ({ task_id: t.task_id, session_id: t.session_id || null, state: t.state })), total: tasks.length, offset, next_offset: offset + limit < tasks.length ? offset + limit : null, tasks: tasks.slice(offset, offset + limit).map((task) => {
-        const view = taskView(task); delete view.response; return view;
+        const view = taskView(task); delete view.response; delete view.previous_response; return view;
       }) };
     });
   }
