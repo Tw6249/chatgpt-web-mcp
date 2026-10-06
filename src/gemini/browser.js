@@ -82,8 +82,10 @@ export class GeminiBrowser {
       const url = new URL(response.url());
       if (url.origin === "https://gemini.google.com" && response.status() === 429) this.networkLimited = true;
     });
-    if (this.sessionId && !state.sessionInitialized && !state.sessionTabs?.[this.sessionId]) {
-      await this.newChat();
+    if (this.sessionId && !state.sessionInitialized) {
+      // sessionPage already navigated a fresh tab. Wait for the app to mount;
+      // navigating again can race initialization and must not clear a resumed draft.
+      await this.waitForReady(page);
       await this.update({ sessionInitialized: true });
     }
     return page;
@@ -95,6 +97,21 @@ export class GeminiBrowser {
       for (const target of await page.locator(selector).all()) if (await target.isVisible()) return target;
     }
     return null;
+  }
+
+  async waitForReady(page) {
+    try {
+      await page.waitForFunction((selectors) => {
+        const visible = e => e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden';
+        const composer = selectors.some(s => [...document.querySelectorAll(s)].some(visible));
+        const signIn = [...document.querySelectorAll('button, a')].some(e => visible(e) && /^(Sign in|登录)$/i.test(e.innerText.trim()));
+        return composer || signIn;
+      }, SELECTORS.composer, { timeout: this.config.actionTimeout });
+    } catch (error) {
+      this.signal?.throwIfAborted();
+      if (error.name !== 'TimeoutError') throw error;
+      throw new WebUIError('PAGE_NOT_READY', 'Gemini is still loading; no sign-in decision or send was made.');
+    }
   }
 
   async snapshot() {
@@ -130,7 +147,7 @@ export class GeminiBrowser {
 
   async status() {
     const page = await this.page();
-    await page.locator(SELECTORS.composer.join(",")).first().waitFor({ state: "visible", timeout: this.config.actionTimeout }).catch(() => {});
+    await this.waitForReady(page);
     const s = await this.snapshot();
     const state = await this.state();
     return { provider: "gemini", url: s.url, signedIn: s.signedIn, composerPresent: s.composerPresent, busy: s.busy, model: s.model, draftPresent: !!s.draft.trim(), attachmentCount: s.attachments.length, pending: state.pending || null, circuitBreaker: state.circuitBreaker || null };
@@ -164,6 +181,7 @@ export class GeminiBrowser {
 
   async editable({ empty = false } = {}) {
     await this.check();
+    await this.waitForReady(await this.page());
     const s = await this.snapshot(); await this.check(s);
     if (empty && (s.draft.trim() || s.attachments.length)) throw new WebUIError("DRAFT_PRESENT", "The Gemini composer has a draft or attachments; preserve or send them first.");
     const composer = await this.first(SELECTORS.composer);
@@ -176,7 +194,7 @@ export class GeminiBrowser {
     await this.editable({ empty: true });
     const page = await this.page();
     await page.goto(this.config.url, { waitUntil: "domcontentloaded" });
-    await page.waitForFunction((selectors) => selectors.some((selector) => [...document.querySelectorAll(selector)].some((e) => e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden')), SELECTORS.composer, { timeout: this.config.actionTimeout });
+    await this.waitForReady(page);
     await this.update({ selectedURL: this.config.url, lastActionAt: Date.now() });
     return this.status();
   }

@@ -90,6 +90,39 @@ test('model selection waits for a delayed new-page model picker', async (t) => {
   assert.equal(result.selectionVerified, true); assert.equal(await page.evaluate(() => sendCount), 0);
 });
 
+test('new named Gemini session waits for app mount and navigates only once', async (t) => {
+  const { b, page } = await fixture(t);
+  const context = page.context();
+  let loads = 0;
+  await context.route('https://gemini.google.com/app', route => {
+    loads++;
+    return route.fulfill({ contentType: 'text/html', body: fixtureHTML + `<script>const editor=document.querySelector('rich-textarea');editor.hidden=true;setTimeout(()=>{editor.hidden=false},400)</script>` });
+  });
+  const named = new GeminiBrowser(b.config, b.runtime, { sessionId: 'delayed-app' });
+  const status = await named.runExclusive(() => named.status());
+  assert.equal(status.signedIn, true); assert.equal(loads, 1);
+  assert.equal((await named.state()).sessionInitialized, true);
+  assert.equal(await (await named.page()).evaluate(() => sendCount), 0);
+});
+
+test('loading timeout is distinct from logout and resumed initialization preserves a draft', async (t) => {
+  const { b, page } = await fixture(t);
+  await page.locator('rich-textarea').evaluate(e => { e.hidden = true; });
+  b.config.actionTimeout = 150;
+  await assert.rejects(b.status(), e => e.code === 'PAGE_NOT_READY');
+  await page.evaluate(() => { const a=document.createElement('a');a.textContent='Sign in';a.href='https://accounts.google.com/ServiceLogin';document.body.append(a); });
+  assert.equal((await b.status()).signedIn, false);
+  await page.locator('a[href*="ServiceLogin"]').evaluate(e => e.remove());
+  await page.locator('rich-textarea').evaluate(e => { e.hidden = false; });
+  const named = new GeminiBrowser(b.config, b.runtime, { sessionId: 'resume-app' });
+  await named.status();
+  await named.writePrompt('Keep this user draft');
+  await named.update({ sessionInitialized: false });
+  await named.close();
+  assert.equal((await named.status()).draftPresent, true);
+  assert.equal((await named.snapshot()).draft.trim(), 'Keep this user draft');
+});
+
 for (const message of ['Sorry, something went wrong. Please try your request again.', 'I encountered an error doing what you asked. Could you try again?', 'I seem to be encountering an error. Can I try something else for you?']) {
 test(`provider service error is surfaced regardless of completion controls: ${message}`, async (t) => {
   const { b, page, directory } = await fixture(t);

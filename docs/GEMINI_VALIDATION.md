@@ -1,4 +1,14 @@
-# Gemini validation — 2026-09-22
+# Gemini validation
+
+## 0.7.4 initialization correction — 2026-10-06
+
+New named tabs previously called `newChat()` immediately after navigation. If Gemini had not mounted its composer, this reported `LOGIN_REQUIRED` for a signed-in account; a later reconnect skipped the incomplete initialization. The controller now waits for the composer or explicit sign-in UI, marks initialization only after readiness, and avoids the second navigation. A loading timeout reports `PAGE_NOT_READY`. Retrying initialization on a bound tab preserves its draft.
+
+Validation: 99 unit tests, 47 offline browser tests, and the 62-tool MCP smoke check passed. Regression coverage includes delayed app mounting, one navigation per new tab, a genuine signed-out page, loading timeout, and preservation of a draft when reconnecting after incomplete initialization.
+
+Live diagnosis used only the synthetic question “模型预测控制是什么？” with 3.8 Flash. Earlier Extended thinking tests returned capability refusals on both first and subsequent turns, although one follow-up succeeded; retrying is therefore not a guaranteed workaround. Two fresh conversations with Extended thinking off returned substantive answers. After the initialization correction, a fresh Extended thinking conversation also returned a substantive first answer. This verifies the concrete initialization defect and a working live path, but does not establish that it caused every provider refusal. A completed transport task is not proof that the response satisfies the question. Do not silently downgrade thinking, send warm-up prompts, or automatically duplicate a refused request.
+
+## Historical validation — 2026-09-22
 
 Version: 0.3.0. Local environment: Windows, Node.js 24.14.0, installed Google Chrome. Original ChatGPT tools and unrelated local edits were preserved.
 
