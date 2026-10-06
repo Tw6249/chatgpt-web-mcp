@@ -8,6 +8,8 @@ export const SELECTORS = {
     "main [contenteditable='true']",
   ],
   sendButton: [
+    "button[aria-label='发送']",
+    "button[aria-label='Send']",
     "button[data-testid='send-button']",
     "button[aria-label='Send prompt']",
     "button[aria-label='发送提示']",

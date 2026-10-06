@@ -8,6 +8,16 @@ import { acquireLock, readState, writeState, WebUIError } from './shared/persist
 const exec = promisify(execFile);
 const source = 'https://github.com/Tw6249/chatgpt-web-mcp.git';
 const validSHA = (sha) => typeof sha === 'string' && /^[a-f0-9]{40}$/.test(sha);
+export function validateUpgradeReport(report) {
+  const blocked = new Set(['IN_USE', 'UNREADABLE_LOCK', 'INVALID_JOURNAL', 'UNREADABLE_STATE']);
+  if (report?.ok !== true || !Array.isArray(report.providers) ||
+      !['chatgpt', 'gemini'].every(id => report.providers.some(p => p.provider === id &&
+        Array.isArray(p.checks) && p.checks.some(c => c.name === 'task_journal' &&
+          ['READABLE', 'TASK_ACTIVE'].includes(c.code)) &&
+        !p.checks.some(c => c.status === 'fail' || blocked.has(c.code))))) {
+    throw new WebUIError('INCOMPATIBLE_TASK_STATE', 'Candidate cannot safely read current task state, or an operation is in progress. Active version and journals are preserved.');
+  }
+}
 export const installDirectory = () => path.resolve(process.env.WEB_CHAT_INSTALL_DIR || path.join(os.homedir(), '.web-chat-mcp', 'install'));
 
 export async function runCommand(command, args, cwd, { signal } = {}) {
@@ -46,6 +56,10 @@ await import(new URL('./releases/'+revision+'/src/cli.js',import.meta.url));
     const dirty = (await this.run('git', ['status', '--porcelain', '--untracked-files=no'], directory, { signal })).stdout.trim();
     if (actual !== sha || dirty) throw new WebUIError('MODIFIED_RELEASE', 'Managed release has changed; refusing to activate it.');
   }
+  async verifyTaskCompatibility(directory, signal) {
+    const diagnostic = await this.run(process.execPath, [path.join(directory, 'src', 'cli.js'), 'doctor'], directory, { signal });
+    validateUpgradeReport(JSON.parse(diagnostic.stdout));
+  }
   async install({ ref = 'main', signal } = {}) {
     if (!/^[a-zA-Z0-9][a-zA-Z0-9._/-]{0,127}$/.test(ref) || ref.includes('..')) throw new WebUIError('INVALID_REF', 'Use a branch, tag or commit from the maintained repository.');
     const release = await acquireLock(path.join(this.directory, 'maintenance.lock'), { timeout: 1000, signal });
@@ -71,7 +85,10 @@ await import(new URL('./releases/'+revision+'/src/cli.js',import.meta.url));
       try { await fs.access(destination); }
       catch (error) { if (error.code !== 'ENOENT') throw error; await fs.rename(candidate, destination); }
       await this.verifyRelease(destination, sha, signal);
+      stage = 'task_compatibility';
+      await this.verifyTaskCompatibility(destination, signal);
       const launch = await this.launcher();
+      stage = 'activate';
       signal?.throwIfAborted(); await this.beforeActivate();
       let manager = previous.manager || sha;
       try { await fs.access(path.join(destination, 'src', 'lifecycle.js')); manager = sha; } catch (error) { if (error.code !== 'ENOENT') throw error; }
@@ -95,6 +112,7 @@ await import(new URL('./releases/'+revision+'/src/cli.js',import.meta.url));
       const pkg = JSON.parse(await fs.readFile(path.join(directory, 'package.json'), 'utf8'));
       await this.verifyRelease(directory, state.previous, signal);
       await this.run('npm', ['run', 'smoke'], directory, { signal });
+      await this.verifyTaskCompatibility(directory, signal);
       signal?.throwIfAborted(); await this.beforeActivate();
       const next = { ...state, current: state.previous, previous: state.current, package_version: pkg.version, activated_at: Date.now() };
       await writeState(path.join(this.directory, 'active.json'), next);

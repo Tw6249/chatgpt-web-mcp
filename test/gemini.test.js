@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { GeminiBrowser, conversationURL, isRateLimit } from "../src/gemini/browser.js";
+import { GeminiBrowser, conversationURL, isRateLimit, isResponseFailure } from "../src/gemini/browser.js";
 import { geminiConfig } from "../src/gemini/config.js";
 import { acquireLock, readState, writeState } from "../src/shared/persistent-browser.js";
 
@@ -18,6 +18,14 @@ async function fixture(t) {
   const runtime = { disconnect: async () => {}, connect: async () => assert.fail("offline test must not open the browser") };
   return new GeminiBrowser(config, runtime);
 }
+
+test('Gemini recognizes the observed service error without matching quoted explanations', () => {
+  const message = 'I encountered an error doing what you asked. Could you try again?';
+  assert.equal(isResponseFailure(message), true);
+  assert.equal(isResponseFailure('  I encountered an error doing what you asked.\nCould you try again? '), true);
+  assert.equal(isResponseFailure('The page may say: ' + message + ' Check your network.'), false);
+  assert.equal(isResponseFailure('The calculation succeeded.'), false);
+});
 
 test("Gemini config isolates provider state and enforces minimum intervals", () => {
   const config = geminiConfig({});

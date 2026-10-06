@@ -1,5 +1,9 @@
 # ChatGPT & Gemini Web MCP
 
+## Browser compatibility fixes (0.7.2)
+
+ChatGPT now recognizes the current Send button and verifies the appended prompt before reporting success, without an Enter fallback. Gemini surfaces its additional service-error message as `PAGE_ERROR`. To repair an older installation that cannot read newer task journals, run `node src/cli.js upgrade --preserve-tasks` from a current checkout; the candidate must validate existing journals before activation. See [upgrade compatibility](docs/COMPARISONS_AND_INSTALL.md#upgrade-and-rollback).
+
 ## MCP + web expert skill
 
 This repository includes both the MCP server (`src/`) and the [web-chat expert skill](skills/web-chat/SKILL.md). The skill prepares the current agent task's questions, context and authorized files, consults ChatGPT or Gemini in the browser, waits for the full answer, and brings it back to continue the original task. ChatGPT is the default; Gemini can be requested explicitly.

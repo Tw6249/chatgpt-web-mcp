@@ -4,6 +4,12 @@
 
 [English](README.en.md)
 
+## 网页兼容修复（0.7.2）
+
+- ChatGPT 识别新版“发送”按钮，只有确认新增消息与提示词一致后才报告发送成功；找不到按钮时保留草稿，不使用 Enter 猜测发送。
+- Gemini 识别新增的服务错误提示，及时返回 `PAGE_ERROR`，不把错误当作持续生成。
+- 旧服务遇到新版任务记录时，可从当前源码运行 `node src/cli.js upgrade --preserve-tasks`。新版先验证现有记录的兼容性，保留任务和防重复发送记录。详见 [升级说明](docs/COMPARISONS_AND_INSTALL.md#upgrade-and-rollback)。
+
 ## MCP + 网页专家 Skill
 
 本仓库同时维护 MCP 服务（`src/`）和 [web-chat 网页专家 Skill](skills/web-chat/SKILL.md)。Skill 负责整理当前 Agent 任务的问题、背景和已授权文件，调用 ChatGPT 或 Gemini 网页端，等待完整回复，再将专家意见用于后续工作。默认使用 ChatGPT，可明确指定 Gemini。

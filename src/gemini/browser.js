@@ -26,7 +26,7 @@ export function isRateLimit(text) {
 }
 
 export function isResponseFailure(text = '') {
-  return /^(?:Sorry, something went wrong\. Please try your request again\.|Something went wrong\. Please try again\.|抱歉，出了点问题。请重试。)$/i.test(normalize(text));
+  return /^(?:Sorry, something went wrong\. Please try your request again\.|Something went wrong\. Please try again\.|I encountered an error doing what you asked\. Could you try again\?|抱歉，出了点问题。请重试。)$/i.test(normalize(text));
 }
 
 export class GeminiBrowser {

@@ -10,7 +10,7 @@ import { WebUIError } from './shared/persistent-browser.js';
 export const lifecycleCommands = ['setup', 'upgrade', 'rollback', 'panel', 'report', 'login'];
 export function parseLifecycle(command, args) {
   const options = {
-    setup: { ref: { type: 'string', default: 'main' } }, upgrade: { ref: { type: 'string', default: 'main' } }, rollback: {},
+    setup: { ref: { type: 'string', default: 'main' } }, upgrade: { ref: { type: 'string', default: 'main' }, 'preserve-tasks': { type: 'boolean', default: false } }, rollback: {},
     panel: { port: { type: 'string', default: '0' } }, report: { out: { type: 'string' } },
     login: { provider: { type: 'string', default: 'all' }, timeout: { type: 'string', default: '900000' } },
   };
@@ -26,9 +26,10 @@ export function parseLifecycle(command, args) {
   }
   return values;
 }
-export async function assertMaintenanceIdle(kernel) {
+export async function assertMaintenanceIdle(kernel, { preserveTasks = false } = {}) {
   const report = await diagnose(kernel);
-  if (report.providers.some((p) => p.checks.some((c) => ['TASK_ACTIVE', 'PENDING', 'IN_USE', 'UNREADABLE_LOCK', 'INVALID_JOURNAL', 'UNREADABLE_STATE'].includes(c.code)))) throw new WebUIError('MAINTENANCE_BLOCKED', 'Resolve active tasks or invalid local state before switching versions. Use doctor and tasks.');
+  const blocked = ['IN_USE', 'UNREADABLE_LOCK', 'INVALID_JOURNAL', 'UNREADABLE_STATE', ...(preserveTasks ? [] : ['TASK_ACTIVE', 'PENDING'])];
+  if (report.providers.some((p) => p.checks.some((c) => blocked.includes(c.code)))) throw new WebUIError('MAINTENANCE_BLOCKED', 'Resolve invalid local state or in-progress operations before switching versions. Existing tasks require an explicit compatible upgrade with --preserve-tasks; do not delete journals.');
 }
 export async function loginProviders(kernel, { provider = 'all', timeout = 900000 } = {}, signal) {
   const ids = provider === 'all' ? [...kernel.providers.keys()] : [provider];
@@ -60,10 +61,11 @@ export async function runLifecycle(command, args) {
   try {
     let result;
     if (['setup', 'upgrade', 'rollback'].includes(command)) {
-      await assertMaintenanceIdle(runtime.kernel);
-      const installer = new Installer({ beforeActivate: () => assertMaintenanceIdle(runtime.kernel) });
+      const preserveTasks = command === 'upgrade' && input['preserve-tasks'] === true;
+      await assertMaintenanceIdle(runtime.kernel, { preserveTasks });
+      const installer = new Installer({ beforeActivate: () => assertMaintenanceIdle(runtime.kernel, { preserveTasks }) });
       console.error('Preparing managed release; existing checkout and browser profiles are preserved.');
-      result = command === 'rollback' ? await installer.rollback({ signal: controller.signal }) : await installer.install({ ...input, signal: controller.signal });
+      result = command === 'rollback' ? await installer.rollback({ signal: controller.signal }) : await installer.install({ ref: input.ref, signal: controller.signal });
     } else if (command === 'login') result = await loginProviders(runtime.kernel, input, controller.signal);
     else if (command === 'report') {
       result = { generated_at: new Date().toISOString(), ...await diagnose(runtime.kernel) };

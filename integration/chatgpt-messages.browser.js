@@ -22,6 +22,34 @@ before(async () => {
 after(async () => { await chrome?.close(); });
 
 const userSelector = SELECTORS.userMessages.join(', ');
+
+for (const label of ['发送', 'Send', 'Send prompt']) {
+  test(`send uses the visible ${label} button exactly once`, async t => {
+    const { page } = await fixture(t, `<form><div contenteditable="true">Preserved draft</div><button type="submit" aria-label="${label}"></button></form>`);
+    await page.evaluate(() => {
+      window.submissions = 0; window.keypresses = 0;
+      document.querySelector('form').addEventListener('submit', e => { e.preventDefault(); window.submissions++; });
+      document.addEventListener('keydown', () => window.keypresses++);
+    });
+    const sender = {
+      firstVisible: async selectors => page.locator(selectors.join(', ')).first(),
+      click: async target => target.click(),
+    };
+    await ChatGPTBrowser.prototype.clickSendButton.call(sender);
+    assert.deepEqual(await page.evaluate(() => [window.submissions, window.keypresses]), [1, 0]);
+  });
+}
+
+test('a missing or disabled send control preserves the draft without Enter fallback', async t => {
+  const { page } = await fixture(t, '<div contenteditable="true">Preserved draft</div><button aria-label="发送" disabled></button>');
+  for (const button of [null, page.locator('button')]) {
+    await assert.rejects(ChatGPTBrowser.prototype.clickSendButton.call({
+      firstVisible: async () => button,
+      click: async () => assert.fail('must not click'),
+    }), error => error.details.code === 'SEND_CONTROL_UNAVAILABLE');
+  }
+  assert.equal(await page.locator('[contenteditable]').innerText(), 'Preserved draft');
+});
 const assistantSelector = SELECTORS.assistantMessages.join(', ');
 const escapeHTML = (text) => String(text).replace(/[&<>"']/g, (c) => ({
   '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',

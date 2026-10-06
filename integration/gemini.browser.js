@@ -90,17 +90,20 @@ test('model selection waits for a delayed new-page model picker', async (t) => {
   assert.equal(result.selectionVerified, true); assert.equal(await page.evaluate(() => sendCount), 0);
 });
 
-test('provider service error is not reported as a successful comparison answer', async (t) => {
+for (const message of ['Sorry, something went wrong. Please try your request again.', 'I encountered an error doing what you asked. Could you try again?']) {
+test(`provider service error is surfaced without waiting for completion controls: ${message}`, async (t) => {
   const { b, page, directory } = await fixture(t);
   const kernel = new TaskKernel([geminiProvider(b)], { directory: path.join(directory, 'tasks') });
   const task = await kernel.send({ provider: 'gemini', request_id: 'service-error', prompt: 'test' });
   await page.locator('[aria-label="Copy response"]').waitFor();
-  await page.locator('.markdown').evaluate((e) => { e.textContent = 'Sorry, something went wrong. Please try your request again.'; });
-  const result = await kernel.result(task.task_id);
+  await page.locator('.markdown').evaluate((e, text) => { e.textContent = text; }, message);
+  await page.locator('[aria-label="Copy response"]').evaluate(e => e.remove());
+  const result = await kernel.result(task.task_id, { wait: true, timeoutMs: 30000 });
   assert.equal(result.state, 'uncertain'); assert.equal(result.error.code, 'PAGE_ERROR');
   assert.equal(await page.evaluate(() => sendCount), 1);
   assert.equal((await kernel.abandon(task.task_id, { confirm: true })).state, 'abandoned');
 });
+}
 
 test("browser sends once, waits for final text and can continue the conversation", async (t) => {
   const { b, page } = await fixture(t);

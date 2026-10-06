@@ -3700,6 +3700,14 @@ export class ChatGPTBrowser {
     };
   }
 
+  async clickSendButton() {
+    const send = await this.firstVisible(SELECTORS.sendButton, { timeout: ACTION_TIMEOUT_MS });
+    if (!send || !(await send.isEnabled().catch(() => false))) {
+      throw new ChatGPTWebError('没有可用的发送按钮；草稿已保留，未尝试 Enter 或再次发送。', { code: 'SEND_CONTROL_UNAVAILABLE' });
+    }
+    await this.click(send, 'send-prompt-click');
+  }
+
   async submitPrompt({
     wait = true,
     timeoutMs = RESPONSE_TIMEOUT_MS,
@@ -3727,12 +3735,7 @@ export class ChatGPTBrowser {
     const userBeforeSnapshot = await this.userMessageSnapshot();
     const userBefore = userBeforeSnapshot.count;
     await this.siteAction("send-prompt");
-    const send = await this.firstVisible(SELECTORS.sendButton, { timeout: 1_000 });
-    if (send && (await send.isEnabled().catch(() => true))) {
-      await this.domClick(send, "send-prompt-click");
-    } else {
-      await this.press(composer, "Enter", "send-prompt-enter");
-    }
+    await this.clickSendButton();
     await this.markSendPerformed();
 
     const generationStartedAt = Date.now();
@@ -3783,6 +3786,14 @@ export class ChatGPTBrowser {
           nextStep: "请人工恢复原消息后再继续；本工具不会自动重试或再次发送。",
         },
       );
+    }
+
+    if (!userMessageAppendVerified || normalize(userAfterSnapshot.lastText) !== normalize(promptText)) {
+      const error = new ChatGPTWebError('发送后未确认新增的用户消息；已保留任务，请检查原页面，不要自动重发。', {
+        code: 'SEND_UNCONFIRMED', userMessageCountBefore: userBefore, userMessageCountAfter: userAfterSnapshot.count,
+      });
+      error.code = 'SEND_UNCONFIRMED';
+      throw error;
     }
 
     if (!wait) {
