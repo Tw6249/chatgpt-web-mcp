@@ -12,6 +12,8 @@ Skill 不包含浏览器登录信息、任务日志或个人聊天内容。安�
 
 Gemini 的默认偏好为 **3.8 Flash + Extended thinking**，用户指定其他设置时覆盖此偏好。MCP 0.7.3 的 `chat_select_model` 支持 Gemini 专用的 `extended_thinking` 布尔参数：模型和独立思考开关都从网页菜单核验后返回。模型不可用、开关缺失或无法确认时停止提交，不自动降级。升级后重新连接 MCP，才能加载新参数。
 
+MCP 0.7.5+ 还提供 `chat_retry({task_id})`：Skill 判断 Gemini 的完整回答是拒答时，在原回答上点击一次 Redo／重试，再以原任务编号等待新回答。每个任务最多一次，重连或重复调用不会重复点击；原回复保存在 `previous_response`。再次拒答时报告结果，不循环重试或新发同一问题。该接口当前不支持 ChatGPT，也不重试状态不明、限流或仍在运行的任务。
+
 ## 1. 获取代码 / Get the repository
 
 需要 Node.js 20+、npm、Git、Chrome 或 Edge，以及支持本地 MCP 和 Skill 的 Codex 客户端。

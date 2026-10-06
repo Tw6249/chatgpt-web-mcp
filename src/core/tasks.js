@@ -153,6 +153,44 @@ export class TaskKernel {
       return taskView(task);
     }, signal);
   }
+  async retry(taskId, { signal } = {}) {
+    const id = this.taskProvider(taskId);
+    return this.locked(id, async (state, save) => {
+      const task = state.tasks[taskId];
+      if (!task) throw new WebUIError('TASK_NOT_FOUND', 'Task not found.');
+      // Persist a single attempt per task so reconnects never repeat a click.
+      if (task.retry_count) return { ...taskView(task), replayed: true };
+      const adapter = this.adapter(id, task.session_id);
+      if (!adapter.prepareRetry) throw new WebUIError('RETRY_UNSUPPORTED', 'This provider does not support verified response retry.');
+      if (task.state !== 'completed' || !task.response?.complete) throw new WebUIError('RETRY_NOT_COMPLETED', 'Retry requires a completed answer, not an uncertain send or running generation.');
+      if (Object.values(state.tasks).some(t => t.task_id !== taskId && t.session_id === task.session_id && (t.created_at >= task.created_at || !terminal.has(t.state)))) throw new WebUIError('TASK_SUPERSEDED', 'A later or active task occupies this session.');
+      await adapter.browser.runExclusive(async () => {
+        const observed = await adapter.inspect();
+        const expected = task.conversation_url || task.response.url;
+        if (!expected || canonicalURL(observed.url) !== canonicalURL(expected)) throw new WebUIError('CONVERSATION_CHANGED', 'Open the original task conversation before retrying.');
+        if (Object.values(state.tasks).some(t => t.task_id !== taskId && !terminal.has(t.state) && [t.conversation_url, t.baseline?.url].some(url => url && canonicalURL(url) === canonicalURL(expected)))) throw new WebUIError('CONVERSATION_ACTIVE', 'Another task is using this conversation.');
+        if (observed.busy || !observed.complete || observed.userCount !== task.baseline.userCount + 1 || textHash(observed.lastUser) !== task.promptHash || observed.text !== task.response.text) throw new WebUIError('RETRY_TARGET_CHANGED', 'The page no longer matches the completed task response.');
+        if (task.response.model && observed.model !== task.response.model) throw new WebUIError('RETRY_MODEL_CHANGED', 'The selected model or thinking setting changed; restore it before retrying.');
+        const clickRetry = await adapter.prepareRetry(observed);
+        task.previous_response = task.response; task.response = null;
+        task.retry_count = 1; task.retry_started_at = Date.now(); task.retry_activity = false;
+        task.state = 'submitting'; task.blocking = true; task.error = null;
+        if (!task.session_id) state.active = taskId;
+        task.updated_at = Date.now(); await save();
+        try {
+          const result = await clickRetry();
+          task.retry_activity = result.started === true;
+          task.state = 'submitted';
+        } catch (error) {
+          task.state = 'uncertain';
+          task.error = { code: error.code || 'RETRY_UNCONFIRMED', message: error.message.split('\n')[0] };
+        }
+        task.updated_at = Date.now(); await save();
+      }, { signal, name: 'chat_retry' });
+      return taskView(task);
+    }, signal);
+  }
+
   async read(taskId, { signal, cancel = false, refresh = false, conversation_url } = {}) {
     const id = this.taskProvider(taskId);
     return this.locked(id, async (state, save) => {
@@ -190,6 +228,10 @@ export class TaskKernel {
           if (!acknowledged && !cancel && task.state === 'submitted' && task.submitted_at && Date.now() - task.submitted_at < 20000 && observed.userCount === task.baseline.userCount && observed.responseCount === task.baseline.responseCount) return;
           if (!acknowledged) throw new WebUIError('SEND_UNCONFIRMED', 'The expected user turn is not confirmed. No resend was attempted.');
           if (!adapter.isProvisional?.(url)) task.conversation_url = url;
+          if (task.retry_count && !task.retry_activity) {
+            if (observed.busy || (observed.text && observed.text !== task.previous_response?.text)) task.retry_activity = true;
+            else throw new WebUIError('RETRY_UNCONFIRMED', 'Only the previous answer is visible; retry completion is not confirmed. Do not click again.');
+          }
           if (observed.complete && observed.responseCount > task.baseline.responseCount) {
             await adapter.settle();
             task.state = 'completed'; task.blocking = false; releaseTask(state, task);

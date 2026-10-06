@@ -23,10 +23,13 @@ Use a new request ID for an intentionally new turn. Reusing an ID with different
 | `chat_new`, `chat_open`, `chat_history` | Conversation navigation and scoped history |
 | `chat_send`, `chat_result`, `chat_tasks` | Durable submission, recovery and metadata |
 | `chat_cancel` | Stop a generation after verifying its conversation and user turn |
+| `chat_retry` (0.7.5+) | Click Gemini's original completed response retry control once, retaining the same task |
 | `chat_abandon` | Explicitly release tracking for an idle, inspected original page |
 | `chat_archive` | Explicit local conversation export with provider-specific scope |
 
 ## State and recovery
+
+In 0.7.5+, a caller that has reviewed a refusal and has authorization to retry can call `chat_retry({"task_id":"gemini:…"})`. This performs Redo → Try again on the original answer, not a new user-message submission. The task must be completed, current, idle, and still match its saved prompt, response and model; drafts and concurrent tasks are protected. The old answer is kept in `previous_response`, `retry_count` is set to 1 before the first click, and the task returns to submitted/running. Continue reading the same task with `chat_result`. A repeated retry call only returns the recorded attempt, including after disconnect; each task has at most one attempt. A new generation must be observed before the old cached answer can be considered replaced. A second refusal is a completed response, not evidence of a useful answer. The bundled Skill stops after that one retry. ChatGPT and uncertain sends are not supported by this retry operation.
 
 The state sequence is `preparing → submitting → submitted/running → completed`. Preflight failures become `failed`; confirmed stops become `cancelled`. A crash or inconclusive page observation becomes `uncertain`. These are local observations, not a claim of server-side exactly-once delivery.
 

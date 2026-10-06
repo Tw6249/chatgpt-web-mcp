@@ -28,7 +28,8 @@ try {
   assert.deepEqual(JSON.parse(providers.content[0].text).providers.map((p) => p.id), ['chatgpt', 'gemini']);
   assert.ok(tools.tools.some((tool) => tool.name === 'chat_doctor'));
   for (const name of ['chat_compare', 'chat_compare_result']) assert.ok(tools.tools.some((tool) => tool.name === name));
-  assert.equal(tools.tools.length, 62);
+  assert.equal(tools.tools.length, 63);
+  assert.ok(tools.tools.some(t => t.name === 'chat_retry'));
   assert.equal(tools.tools.find(t => t.name === 'chat_select_model').inputSchema.properties.extended_thinking.type, 'boolean');
   const wrongProvider = await client.callTool({ name: 'chat_select_model', arguments: { provider: 'chatgpt', model: 'unused', extended_thinking: true } });
   assert.equal(wrongProvider.isError, true);

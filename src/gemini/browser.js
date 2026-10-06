@@ -229,6 +229,51 @@ export class GeminiBrowser {
     return wait ? this.waitForResponse({ timeoutMs }) : { submitted: true, pending: true, url: (await this.page()).url() };
   }
 
+  async prepareRetry(expected) {
+    await this.editable({ empty: true }); await this.throttle('send');
+    const page = await this.page();
+    const checkIdentity = async () => {
+      const s = await this.snapshot(); await this.check(s);
+      if (s.url !== expected.url || s.userCount !== expected.userCount || s.responseCount !== expected.responseCount ||
+          s.lastUser !== expected.lastUser || s.text !== expected.text || s.model !== expected.model || !s.completeControl || s.draft.trim() || s.attachments.length) {
+        throw new WebUIError('RETRY_TARGET_CHANGED', 'The completed response or composer changed; nothing was retried.');
+      }
+    };
+    await checkIdentity();
+    const button = page.locator(SELECTORS.assistant).filter({ visible: true }).last().getByRole('button', { name: /^(Redo|Retry|Try again|重试|重新生成)$/i });
+    if (await button.count() !== 1 || !await button.isVisible() || !await button.isEnabled()) throw new WebUIError('RETRY_UNAVAILABLE', 'The last response has no available retry control.');
+    return async () => {
+      await checkIdentity();
+      await this.update({ lastSendAt: Date.now() });
+      await button.click();
+      try {
+        const waitForStart = (allowMenu) => page.waitForFunction(({ selectors, text, allowMenu }) => {
+          const visible = e => e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden';
+          if (selectors.stop.some(s => [...document.querySelectorAll(s)].some(visible))) return 'started';
+          const latest = [...document.querySelectorAll(selectors.assistant)].filter(visible).at(-1);
+          const next = latest?.querySelector(selectors.answer)?.innerText.trim();
+          if (next && next !== text) return 'started';
+          if (allowMenu && [...document.querySelectorAll('[role="menuitem"]')].some(e => visible(e) && /^(Try again|重试)$/i.test(e.innerText.trim()))) return 'menu';
+          return false;
+        }, { selectors: SELECTORS, text: expected.text, allowMenu }, { timeout: this.config.actionTimeout });
+        const ready = await waitForStart(true);
+        const kind = await ready.jsonValue(); await ready.dispose();
+        if (kind === 'menu') {
+          // Current Gemini opens a menu with Longer, Shorter and Try again.
+          // Only the unchanged-answer retry is authorized here.
+          await checkIdentity();
+          await page.getByRole('menuitem', { name: /^(Try again|重试)$/i }).click();
+          await (await waitForStart(false)).dispose();
+        }
+      } catch (error) {
+        this.signal?.throwIfAborted();
+        if (error.name !== 'TimeoutError') throw error;
+        throw new WebUIError('RETRY_UNCONFIRMED', 'The retry click was issued but a new generation was not confirmed. Inspect the original page; do not click again.');
+      }
+      return { started: true };
+    };
+  }
+
   async waitForResponse({ timeoutMs = this.config.responseTimeout } = {}) {
     const deadline = Date.now() + timeoutMs;
     let previous = "", stableSince = Date.now();

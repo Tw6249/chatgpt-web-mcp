@@ -15,7 +15,7 @@ export function geminiProvider(browser) {
   return {
     id: 'gemini', browser,
     localConfig: browser.config,
-    capabilities: { files: true, models: true, history: true, archive: 'loaded-messages', cancellation: true, sessions: true },
+    capabilities: { files: true, models: true, history: true, archive: 'loaded-messages', cancellation: true, sessions: true, retry: true },
     isRoot: (url) => url === 'https://gemini.google.com/app',
     async prepare() {
       await browser.editable({ empty: true });
@@ -33,6 +33,7 @@ export function geminiProvider(browser) {
       return { ...s, complete: !!s.text && !s.busy && s.completeControl };
     },
     async settle() { await browser.update({ pending: null, lastCompletedAt: Date.now() }); },
+    prepareRetry: (observed) => browser.prepareRetry(observed),
     cancel: () => stop(browser, geminiSelectors.stop),
   };
 }

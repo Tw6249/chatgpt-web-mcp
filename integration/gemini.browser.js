@@ -90,6 +90,68 @@ test('model selection waits for a delayed new-page model picker', async (t) => {
   assert.equal(result.selectionVerified, true); assert.equal(await page.evaluate(() => sendCount), 0);
 });
 
+for (const menu of [false, true]) {
+test(`durable response retry uses ${menu ? 'Redo then Try again' : 'a direct retry button'} without adding a user turn`, async t => {
+  const { b, page, directory } = await fixture(t);
+  const kernel = new TaskKernel([geminiProvider(b)], { directory: path.join(directory, 'tasks') });
+  const task = await kernel.send({ provider: 'gemini', request_id: 'retry-ui', prompt: 'Explain MPC' });
+  await page.locator('[aria-label="Copy response"]').waitFor();
+  await kernel.result(task.task_id);
+  await page.evaluate(menu => {
+    window.retryClicks = 0;
+    const response=document.querySelector('model-response');
+    const run=()=>{
+      window.retryClicks++; document.querySelector('[role="menu"]')?.remove();
+      const stop=document.createElement('button');stop.setAttribute('aria-label','Stop response');document.body.append(stop);
+      setTimeout(()=>{response.querySelector('.markdown').textContent='Retried explanation';stop.remove();},500);
+    };
+    const retry=document.createElement('button');retry.setAttribute('aria-label',menu?'Redo':'Retry');
+    retry.onclick=()=>{
+      if(!menu)return run();
+      const choices=document.createElement('div');choices.setAttribute('role','menu');
+      for(const label of ['Longer','Shorter','Try again']){
+        const option=document.createElement('button');option.setAttribute('role','menuitem');option.textContent=label;
+        option.onclick=()=>{if(label!=='Try again')throw Error('Wrong retry action');run();};choices.append(option);
+      }
+      document.body.append(choices);
+    };
+    response.append(retry);
+  },menu);
+  assert.equal((await kernel.retry(task.task_id)).state, 'submitted');
+  const result=await kernel.result(task.task_id,{wait:true,timeoutMs:10000});
+  assert.equal(result.response.text,'Retried explanation');
+  assert.equal((await kernel.retry(task.task_id)).replayed,true);
+  assert.equal(await page.evaluate(()=>retryClicks),1);
+  assert.equal(await page.evaluate(()=>sendCount),1);
+  assert.equal(await page.locator('user-query').count(),1);
+});
+}
+
+test('retry preserves a user draft and refuses a missing retry control without consuming its attempt', async t => {
+  const { b, page, directory } = await fixture(t);
+  const kernel=new TaskKernel([geminiProvider(b)],{directory:path.join(directory,'tasks')});
+  const task=await kernel.send({provider:'gemini',request_id:'retry-preflight',prompt:'Question'});
+  await page.locator('[aria-label="Copy response"]').waitFor();
+  await kernel.result(task.task_id);
+  await assert.rejects(kernel.retry(task.task_id),{code:'RETRY_UNAVAILABLE'});
+  await b.writePrompt('Keep this draft');
+  await assert.rejects(kernel.retry(task.task_id),{code:'DRAFT_PRESENT'});
+  assert.equal((await kernel.result(task.task_id)).retry_count,undefined);
+  assert.equal((await b.snapshot()).draft,'Keep this draft');
+});
+
+test('a model change after retry preflight prevents the generation click', async t => {
+  const { b, page } = await fixture(t);
+  await b.sendMessage({prompt:'Question',wait:false});
+  await page.locator('[aria-label="Copy response"]').waitFor();
+  await b.update({pending:null});
+  await page.locator('model-response').evaluate(e=>{const button=document.createElement('button');button.setAttribute('aria-label','Redo');button.onclick=()=>{window.unexpectedRetry=true};e.append(button)});
+  const click=await b.prepareRetry(await b.snapshot());
+  await page.locator('[aria-label="Open mode picker"]').evaluate(e=>{e.textContent='Changed model'});
+  await assert.rejects(click(),{code:'RETRY_TARGET_CHANGED'});
+  assert.equal(await page.evaluate(()=>window.unexpectedRetry),undefined);
+});
+
 test('new named Gemini session waits for app mount and navigates only once', async (t) => {
   const { b, page } = await fixture(t);
   const context = page.context();

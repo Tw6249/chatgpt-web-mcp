@@ -63,6 +63,57 @@ test('uncertain delivery reconciles without another send', async (t) => {
   Object.assign(f.page, { responseCount: 1, busy: false, complete: true, text: 'recovered' });
   assert.equal((await f.kernel.result(task.task_id)).state, 'completed'); assert.equal(f.sends(), 1);
 });
+
+test('retry replaces the completed response once, including concurrent calls and restart replay', async t => {
+  const f = await fixture(t); const original = await f.kernel.send(f.input);
+  Object.assign(f.page, { responseCount: 1, busy: false, complete: true, text: 'refusal' });
+  await f.kernel.result(original.task_id);
+  let clicks = 0;
+  f.adapter.prepareRetry = async () => async () => { clicks++; f.page.busy = true; f.page.complete = false; return { started: true }; };
+  const next = new TaskKernel([f.adapter], { directory: f.directory });
+  const results = await Promise.all([f.kernel.retry(original.task_id), next.retry(original.task_id)]);
+  assert.equal(clicks, 1); assert.equal(results.filter(r => r.replayed).length, 1);
+  assert.equal((await next.result(original.task_id)).state, 'running');
+  Object.assign(f.page, { busy: false, complete: true, text: 'helpful answer' });
+  const completed = await next.result(original.task_id);
+  assert.equal(completed.response.text, 'helpful answer'); assert.equal(completed.previous_response.text, 'refusal');
+  assert.equal(completed.retry_count, 1); assert.equal(f.sends(), 1); assert.equal(f.page.userCount, 1);
+  assert.equal((await next.retry(original.task_id)).replayed, true); assert.equal(clicks, 1);
+});
+
+test('unconfirmed retry never returns the cached refusal or clicks again, but observation can recover', async t => {
+  const f = await fixture(t); const task = await f.kernel.send(f.input);
+  Object.assign(f.page, { responseCount: 1, busy: false, complete: true, text: 'refusal' });
+  await f.kernel.result(task.task_id);
+  let clicks = 0;
+  f.adapter.prepareRetry = async () => async () => { clicks++; throw new Error('connection lost'); };
+  assert.equal((await f.kernel.retry(task.task_id)).state, 'uncertain');
+  assert.equal((await f.kernel.result(task.task_id)).error.code, 'RETRY_UNCONFIRMED');
+  await f.kernel.retry(task.task_id); assert.equal(clicks, 1);
+  Object.assign(f.page, { busy: true, complete: false });
+  assert.equal((await f.kernel.result(task.task_id)).state, 'running');
+  Object.assign(f.page, { busy: false, complete: true });
+  assert.equal((await f.kernel.result(task.task_id)).response.text, 'refusal', 'A second identical refusal is final after observed generation');
+});
+
+test('retry refuses active, changed and superseded targets before any click', async t => {
+  const f = await fixture(t); let prepares = 0;
+  f.adapter.prepareRetry = async () => { prepares++; return async () => ({ started: true }); };
+  const task = await f.kernel.send(f.input);
+  await assert.rejects(f.kernel.retry(task.task_id), { code: 'RETRY_NOT_COMPLETED' });
+  Object.assign(f.page, { responseCount: 1, busy: false, complete: true, text: 'refusal', model: 'Flash Extended' });
+  await f.kernel.result(task.task_id);
+  f.page.lastUser = 'different';
+  await assert.rejects(f.kernel.retry(task.task_id), { code: 'RETRY_TARGET_CHANGED' });
+  f.page.lastUser = f.input.prompt; f.page.model = 'Flash';
+  await assert.rejects(f.kernel.retry(task.task_id), { code: 'RETRY_MODEL_CHANGED' });
+  f.page.model = 'Flash Extended'; f.page.url += '/different';
+  await assert.rejects(f.kernel.retry(task.task_id), { code: 'CONVERSATION_CHANGED' });
+  f.page.url = 'https://example.com/chat/1';
+  await f.kernel.send({ ...f.input, request_id: 'later' });
+  await assert.rejects(f.kernel.retry(task.task_id), { code: 'TASK_SUPERSEDED' });
+  assert.equal(prepares, 0);
+});
 test('delayed UI acknowledgement stays submitted without resending and later completes', async (t) => {
   const f = await fixture(t); const send = f.adapter.send;
   f.adapter.send = async () => ({ url: f.page.url });
