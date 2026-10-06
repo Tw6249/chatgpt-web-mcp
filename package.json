@@ -27,6 +27,8 @@
   },
   "files": [
     "src",
+    "skills/web-chat",
+    "docs/CODEX_SKILL.md",
     "docs/GEMINI_VALIDATION.md",
     "scripts/doctor.js",
     "scripts/gemini.js",

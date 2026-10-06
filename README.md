@@ -4,6 +4,12 @@
 
 [English](README.en.md)
 
+## MCP + 网页专家 Skill
+
+本仓库同时维护 MCP 服务（`src/`）和 [web-chat 网页专家 Skill](skills/web-chat/SKILL.md)。Skill 负责整理当前 Agent 任务的问题、背景和已授权文件，调用 ChatGPT 或 Gemini 网页端，等待完整回复，再将专家意见用于后续工作。默认使用 ChatGPT，可明确指定 Gemini。
+
+按照 [Codex 安装与使用指南](docs/CODEX_SKILL.md) 配置名为 `web-chat` 的 MCP 并安装 Skill。已有 MCP 配置时只需复制 Skill，无需重新安装服务。示例：`使用 $web-chat，请 Gemini 审阅当前方案，取得完整意见后继续改进。`
+
 ## 同平台任务并行（0.7.0）
 
 为不同研究任务传入不同的 `session_id`，即可在同一 ChatGPT 或 Gemini 登录环境中使用独立标签页并行生成回答。每个任务仍有自己的 `task_id`，支持进程重连后恢复读取；一个任务未确认，不会占用其他会话。页面操作和账号限流仍统一协调。

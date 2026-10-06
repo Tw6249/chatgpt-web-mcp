@@ -1,5 +1,11 @@
 # ChatGPT & Gemini Web MCP
 
+## MCP + web expert skill
+
+This repository includes both the MCP server (`src/`) and the [web-chat expert skill](skills/web-chat/SKILL.md). The skill prepares the current agent task's questions, context and authorized files, consults ChatGPT or Gemini in the browser, waits for the full answer, and brings it back to continue the original task. ChatGPT is the default; Gemini can be requested explicitly.
+
+See the [Codex installation and usage guide](docs/CODEX_SKILL.md) to register the `web-chat` MCP and install the skill. If the MCP is already configured, install only the skill. Example: `Use $web-chat to ask Gemini to review this plan, then use its complete response to improve the plan.`
+
 ## Parallel sessions (0.7.0)
 
 Pass distinct `session_id` values to `chat_send` for independent tabs and
