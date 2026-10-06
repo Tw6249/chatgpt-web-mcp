@@ -90,20 +90,40 @@ test('model selection waits for a delayed new-page model picker', async (t) => {
   assert.equal(result.selectionVerified, true); assert.equal(await page.evaluate(() => sendCount), 0);
 });
 
-for (const message of ['Sorry, something went wrong. Please try your request again.', 'I encountered an error doing what you asked. Could you try again?']) {
-test(`provider service error is surfaced without waiting for completion controls: ${message}`, async (t) => {
+for (const message of ['Sorry, something went wrong. Please try your request again.', 'I encountered an error doing what you asked. Could you try again?', 'I seem to be encountering an error. Can I try something else for you?']) {
+test(`provider service error is surfaced regardless of completion controls: ${message}`, async (t) => {
   const { b, page, directory } = await fixture(t);
   const kernel = new TaskKernel([geminiProvider(b)], { directory: path.join(directory, 'tasks') });
   const task = await kernel.send({ provider: 'gemini', request_id: 'service-error', prompt: 'test' });
   await page.locator('[aria-label="Copy response"]').waitFor();
   await page.locator('.markdown').evaluate((e, text) => { e.textContent = text; }, message);
-  await page.locator('[aria-label="Copy response"]').evaluate(e => e.remove());
+  if (!message.startsWith('I seem')) await page.locator('[aria-label="Copy response"]').evaluate(e => e.remove());
   const result = await kernel.result(task.task_id, { wait: true, timeoutMs: 30000 });
   assert.equal(result.state, 'uncertain'); assert.equal(result.error.code, 'PAGE_ERROR');
   assert.equal(await page.evaluate(() => sendCount), 1);
   assert.equal((await kernel.abandon(task.task_id, { confirm: true })).state, 'abandoned');
 });
 }
+
+test('Extended thinking is verified separately, idempotent, and fails closed on missing or ineffective controls', async (t) => {
+  const { b, page } = await fixture(t);
+  await page.getByRole('menuitem', { name: 'Extended thinking', includeHidden: true }).evaluate(e => {
+    window.toggleCount = 0;
+    e.onclick = () => { window.toggleCount++; e.classList.toggle('selected'); e.parentElement.hidden = true; };
+  });
+  const first = await b.selectModel('Thinking', { extended_thinking: true });
+  assert.equal(first.extendedThinking, true); assert.equal(first.thinkingVerified, true);
+  await b.selectModel('Thinking', { extended_thinking: true });
+  assert.equal(await page.evaluate(() => toggleCount), 1);
+  assert.equal((await b.setExtendedThinking(false)).extendedThinking, false);
+  assert.equal(await page.evaluate(() => toggleCount), 2);
+  await page.getByRole('menuitem', { name: 'Extended thinking', includeHidden: true }).evaluate(e => { e.onclick = () => {}; });
+  await assert.rejects(b.setExtendedThinking(true), e => e.code === 'THINKING_NOT_CONFIRMED');
+  await page.getByRole('menuitem', { name: 'Extended thinking', includeHidden: true }).evaluate(e => e.remove());
+  b.config.actionTimeout = 200;
+  await assert.rejects(b.setExtendedThinking(true), e => e.code === 'THINKING_UNAVAILABLE');
+  assert.equal(await page.evaluate(() => sendCount), 0);
+});
 
 test("browser sends once, waits for final text and can continue the conversation", async (t) => {
   const { b, page } = await fixture(t);

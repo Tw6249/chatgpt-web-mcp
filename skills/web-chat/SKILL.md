@@ -43,7 +43,8 @@ description: "通过本机 web-chat MCP 调用 ChatGPT 或 Gemini 网页专家�
 1. 发现工具；必要时调用 `chat_providers({})` 检查能力，`chat_doctor` 仅检查本地环境，不证明网页登录成功。工具未加载时说明需加载已有 MCP，不另行安装副本。
 2. 用 `chat_status({provider})` 核实网页和托管任务状态。需要登录/验证码时让用户在专用浏览器中完成，再继续；不索取密码或 Cookie。
 3. 独立咨询用 `chat_new({provider})` 新建会话；追问继续本任务原会话。已有草稿、附件、正在运行的任务或页面身份不符时先检查，不清空或覆盖用户内容，不修改其他任务占用的页面。
-4. 用户要求特定模型时先 `chat_models({provider})`，再用实际返回的名称调用 `chat_select_model({provider, model})`。未要求时保留合适的当前可用模型，不硬编码型号，不把普通模型冒称 Pro。遵守 MCP 当前平台规则，不调用 Pro 身份探针。
+4. 用户要求特定模型时先 `chat_models({provider})`，再用实际返回的名称调用 `chat_select_model({provider, model})`。ChatGPT 未要求时保留合适的当前可用模型，不把普通模型冒称 Pro。遵守 MCP 当前平台规则，不调用 Pro 身份探针。
+5. 本仓库的 Gemini 默认偏好是 **3.8 Flash + Extended thinking**；用户明确指定其他设置时优先遵从。先核实模型列表确有 `3.8 Flash`，再调用 `chat_select_model({provider:"gemini", session_id:"本次会话", model:"3.8 Flash", extended_thinking:true})`。确认 `selectionVerified:true`、`extendedThinking:true` 和 `thinkingVerified:true` 后才发送。Extended thinking 是独立开关，不是模型名称。随后 `chat_send` 沿用该会话并省略 `model`，避免重复选择重置设置。旧版工具若不支持 `extended_thinking`，先重连更新后的 MCP；模型或开关不可用时明确报告，不静默降级，不把未验证的设置称为已启用。
 
 ## 提交一次，等待完整结果
 

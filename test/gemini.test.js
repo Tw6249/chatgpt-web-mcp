@@ -25,6 +25,9 @@ test('Gemini recognizes the observed service error without matching quoted expla
   assert.equal(isResponseFailure('  I encountered an error doing what you asked.\nCould you try again? '), true);
   assert.equal(isResponseFailure('The page may say: ' + message + ' Check your network.'), false);
   assert.equal(isResponseFailure('The calculation succeeded.'), false);
+  const retryError = 'I seem to be encountering an error. Can I try something else for you?';
+  assert.equal(isResponseFailure(retryError), true);
+  assert.equal(isResponseFailure('An example error: ' + retryError), false);
 });
 
 test("Gemini config isolates provider state and enforces minimum intervals", () => {

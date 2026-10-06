@@ -26,7 +26,7 @@ export function isRateLimit(text) {
 }
 
 export function isResponseFailure(text = '') {
-  return /^(?:Sorry, something went wrong\. Please try your request again\.|Something went wrong\. Please try again\.|I encountered an error doing what you asked\. Could you try again\?|抱歉，出了点问题。请重试。)$/i.test(normalize(text));
+  return /^(?:Sorry, something went wrong\. Please try your request again\.|Something went wrong\. Please try again\.|I encountered an error doing what you asked\. Could you try again\?|I seem to be encountering an error\. Can I try something else for you\?|抱歉，出了点问题。请重试。)$/i.test(normalize(text));
 }
 
 export class GeminiBrowser {
@@ -300,7 +300,28 @@ export class GeminiBrowser {
     return (items.some((item) => item.mode) ? items.filter((item) => item.mode) : items).map(({ mode, ...item }) => item);
   }
 
-  async selectModel(model) {
+  async setExtendedThinking(enabled) {
+    if (typeof enabled !== 'boolean') throw new WebUIError('INVALID_ARGUMENT', 'extended_thinking must be boolean.');
+    const inspect = async (change) => {
+      await this.editable(); await this.throttle('change');
+      await (await this.modelButton()).click();
+      const page = await this.page();
+      try {
+        const item = page.getByRole('menuitem', { name: /Extended thinking/i });
+        await item.waitFor({ state: 'visible', timeout: this.config.actionTimeout }).catch(() => {});
+        if (await item.count() !== 1 || !await item.isVisible() || !await item.isEnabled()) throw new WebUIError('THINKING_UNAVAILABLE', 'Extended thinking is unavailable in the current Gemini model menu.');
+        const selected = await item.evaluate(e => e.classList.contains('selected') || e.getAttribute('aria-checked') === 'true' || e.getAttribute('aria-selected') === 'true');
+        if (change && selected !== enabled) { await item.click(); return null; }
+        return selected;
+      } finally { await page.keyboard.press('Escape'); }
+    };
+    let selected = await inspect(true);
+    if (selected === null) selected = await inspect(false);
+    if (selected !== enabled) throw new WebUIError('THINKING_NOT_CONFIRMED', 'Gemini did not confirm the requested Extended thinking setting.');
+    return { extendedThinking: selected, thinkingVerified: true };
+  }
+
+  async selectModel(model, { extended_thinking } = {}) {
     await this.editable(); await this.throttle("change");
     const button = await this.modelButton();
     await button.click(); const page = await this.page();
@@ -312,7 +333,8 @@ export class GeminiBrowser {
     } finally { await page.keyboard.press("Escape"); }
     const checked = await this.listModels();
     if (!checked.models.some((item) => normalize(item.name) === normalize(model) && item.selected)) throw new WebUIError("MODEL_NOT_CONFIRMED", "The model selection could not be confirmed from Gemini's menu.");
-    return { ...await this.status(), selectedModel: model, selectionVerified: true };
+    const thinking = extended_thinking === undefined ? {} : await this.setExtendedThinking(extended_thinking);
+    return { ...await this.status(), selectedModel: model, selectionVerified: true, ...thinking };
   }
 
   async modelButton() {

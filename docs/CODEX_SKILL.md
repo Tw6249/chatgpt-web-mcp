@@ -10,6 +10,8 @@ skills/web-chat/agents/openai.yaml Skill 名称、提示词与 MCP 依赖
 
 Skill 不包含浏览器登录信息、任务日志或个人聊天内容。安装 Skill 不会自动注册 MCP，也不会自动向网页发送资料。
 
+Gemini 的默认偏好为 **3.8 Flash + Extended thinking**，用户指定其他设置时覆盖此偏好。MCP 0.7.3 的 `chat_select_model` 支持 Gemini 专用的 `extended_thinking` 布尔参数：模型和独立思考开关都从网页菜单核验后返回。模型不可用、开关缺失或无法确认时停止提交，不自动降级。升级后重新连接 MCP，才能加载新参数。
+
 ## 1. 获取代码 / Get the repository
 
 需要 Node.js 20+、npm、Git、Chrome 或 Edge，以及支持本地 MCP 和 Skill 的 Codex 客户端。
