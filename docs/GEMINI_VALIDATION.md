@@ -8,6 +8,8 @@ Validation: 99 unit tests, 47 offline browser tests, and the 62-tool MCP smoke c
 
 Live diagnosis used only the synthetic question “模型预测控制是什么？” with 3.8 Flash. Earlier Extended thinking tests returned capability refusals on both first and subsequent turns, although one follow-up succeeded; retrying is therefore not a guaranteed workaround. Two fresh conversations with Extended thinking off returned substantive answers. After the initialization correction, a fresh Extended thinking conversation also returned a substantive first answer. This verifies the concrete initialization defect and a working live path, but does not establish that it caused every provider refusal. A completed transport task is not proof that the response satisfies the question. Do not silently downgrade thinking, send warm-up prompts, or automatically duplicate a refused request.
 
+Additional live checks after the correction: Extended thinking first turns produced one substantive answer and two capability refusals across three fresh sessions. One refusal occurred without reselecting the inherited model, ruling out redundant model selection as a necessary condition. The two thinking-off controls both answered. These are small, single-account diagnostic samples, not reliability estimates. The initialization fix does not resolve the remaining intermittent refusal behavior, and no server-side root cause is established.
+
 ## Historical validation — 2026-09-22
 
 Version: 0.3.0. Local environment: Windows, Node.js 24.14.0, installed Google Chrome. Original ChatGPT tools and unrelated local edits were preserved.
