@@ -35,6 +35,12 @@ operation now retains the resolved target. The old provider-wide unresolved-send
 guard is removed; same-session occupancy, conversation identity, drafts,
 idempotency and account-wide rate limits remain enforced.
 
+Version 0.7.8 also waits for a visible, enabled send control after uploads.
+Attachment chips may appear before processing finishes. Readiness is polled
+within the action timeout, then the button is clicked once. A timeout preserves
+the draft; an ambiguous click error is never retried or replaced with Enter.
+This does not unlock existing uncertain tasks or recreate missing session tabs.
+
 ## Isolation and limits
 
 - Tabs are pinned by Chrome target ID, not active-tab order, page title or URL.

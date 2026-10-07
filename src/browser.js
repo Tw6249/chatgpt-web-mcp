@@ -3703,12 +3703,25 @@ export class ChatGPTBrowser {
     };
   }
 
-  async clickSendButton() {
-    const send = await this.firstVisible(SELECTORS.sendButton, { timeout: ACTION_TIMEOUT_MS });
-    if (!send || !(await send.isEnabled().catch(() => false))) {
-      throw new ChatGPTWebError('没有可用的发送按钮；草稿已保留，未尝试 Enter 或再次发送。', { code: 'SEND_CONTROL_UNAVAILABLE' });
-    }
-    await this.click(send, 'send-prompt-click');
+  async clickSendButton({ timeoutMs = ACTION_TIMEOUT_MS } = {}) {
+    const page = await this.page();
+    const deadline = Date.now() + timeoutMs;
+    // File chips can be visible while upload processing still disables Send.
+    // Wait for readiness without attempting a submission or changing the draft.
+    do {
+      throwIfAborted(this.signal?.());
+      const candidates = await page.locator(SELECTORS.sendButton.join(', ')).all();
+      for (const send of candidates) {
+        if (await send.isVisible().catch(() => false) && await send.isEnabled().catch(() => false)) {
+          throwIfAborted(this.signal?.());
+          // A failed/ambiguous click must escape this loop, never trigger a retry.
+          await this.click(send, 'send-prompt-click');
+          return;
+        }
+      }
+      await waitWithAbort(Math.min(100, Math.max(0, deadline - Date.now())), this.signal?.());
+    } while (Date.now() < deadline);
+    throw new ChatGPTWebError('没有可用的发送按钮；草稿已保留，未尝试 Enter 或再次发送。', { code: 'SEND_CONTROL_UNAVAILABLE' });
   }
 
   async submitPrompt({
