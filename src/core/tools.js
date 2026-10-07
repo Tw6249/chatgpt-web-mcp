@@ -15,7 +15,13 @@ export function registerUnifiedTools(server, kernel) {
   tool('chat_compare_result', 'Observe comparison children without sending or changing models. Returns each target response, task state and recovery guidance separately.', { comparison_id: z.string() }, (i, signal) => comparisons.result(i.comparison_id, { signal }));
   tool('chat_providers', 'List installed providers and their supported capabilities. No browser access.', {}, async () => ({ providers: [...kernel.providers.values()].map(({ id, capabilities }) => ({ id, capabilities })) }));
   tool('chat_doctor', 'Inspect local executable, runtime and task-journal health. Does not open a browser or verify sign-in. Report excludes paths, conversation URLs, task IDs, responses and raw errors.', { provider: provider.optional() }, (i) => diagnose(kernel, i.provider ? [i.provider] : undefined));
-  tool('chat_status', 'Read the selected session page and local managed-task state.', { provider, session_id }, async (i, signal) => ({ ...await run(i.provider, 'status', [], signal, true, i.session_id), session_id: i.session_id || null, ...await kernel.list(i.provider, 1) }));
+  tool('chat_status', 'Read the selected session page and local managed-task state. Optional ChatGPT include_messages returns the currently rendered user/assistant text for read-only recovery inspection; it neither acknowledges nor releases a task.', { provider, session_id, include_messages: z.boolean().default(false) }, async (i, signal) => {
+    if (i.include_messages && i.provider !== 'chatgpt') throw Object.assign(new Error('include_messages currently supports ChatGPT only.'), { code: 'INVALID_ARGUMENT' });
+    const status = await run(i.provider, 'status', [], signal, true, i.session_id);
+    const observed = i.include_messages ? await run(i.provider, 'getLatestResponse', [{ includeTranscript: false }], signal, true, i.session_id) : undefined;
+    if (observed) observed.rendered_messages = await run(i.provider, 'renderedConversationMessages', [{ includeRawText: true }], signal, true, i.session_id);
+    return { ...status, ...(observed ? { observed } : {}), session_id: i.session_id || null, ...await kernel.list(i.provider, 1) };
+  });
   tool('chat_models', 'List names actually available on the selected provider session. Model names are provider-specific.', { provider, session_id }, (i, s) => run(i.provider, 'listModels', [], s, false, i.session_id));
   tool('chat_select_model', 'Select and verify an exact available model name. Gemini optionally sets and verifies its separate Extended thinking toggle before sending.', { provider, session_id, model: z.string().min(1), extended_thinking: z.boolean().optional() }, (i, s) => {
     if (i.extended_thinking !== undefined && i.provider !== 'gemini') throw Object.assign(new Error('extended_thinking is supported only for Gemini.'), { code: 'INVALID_ARGUMENT' });

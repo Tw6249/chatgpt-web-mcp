@@ -221,6 +221,37 @@ test('mixed nested legacy and semantic markup is counted once in document order'
   ]);
 });
 
+test('nested link search targets do not create extra user turns or replace the prompt', async (t) => {
+  const prompt = 'Read https://example.org/paper then compare all constraints.';
+  const { page, reader, messages } = await fixture(t, newUser('nested-link', prompt));
+  await page.locator('[data-search-result-target]').evaluate(node => {
+    node.innerHTML = 'Read <a data-search-result-target href="https://example.org/paper">https://example.org/paper</a> then compare all constraints.';
+  });
+  assert.equal(await page.locator(userSelector).count(), 1);
+  assert.deepEqual(await ChatGPTBrowser.prototype.userMessageSnapshot.call(reader), {
+    count: 1, lastText: prompt, lastId: 'nested-link',
+  });
+  const actual = await messages();
+  assert.equal(actual.length, 1);
+  assert.equal(textHash(actual[0].text), textHash(prompt));
+  await page.locator('body').evaluate(node => node.insertAdjacentHTML('beforeend',
+    '<div data-user-message-bubble data-chatgpt-search-message-ids="genuine-second"><div data-search-result-target>A genuine second message</div></div>'));
+  assert.equal(await page.locator(userSelector).count(), 2);
+});
+
+test('rich paragraph mention chips preserve adjacent punctuation and real whitespace', async (t) => {
+  const prompt = 'First paragraph.\n\n论文（https://example.org/p）结论。 Keep spaced words.\nA new line.';
+  const { page, reader, messages } = await fixture(t, newUser('rich-link', 'placeholder'));
+  await page.locator('[data-search-result-target]').evaluate(node => {
+    node.innerHTML = '<div class="rich-text-user-turn"><p>First paragraph.</p><p>论文（<a data-search-result-target style="display:block"><span data-markdown-copy="exclude">icon</span>https://example.org/p</a>）结论。 Keep spaced words.<br>A new line.</p></div>';
+  });
+  assert.equal(await page.locator(userSelector).count(), 1);
+  const snapshot = await ChatGPTBrowser.prototype.userMessageSnapshot.call(reader);
+  assert.equal(textHash(snapshot.lastText), textHash(prompt));
+  assert.equal(textHash((await messages())[0].text), textHash(prompt));
+  assert.notEqual(textHash(snapshot.lastText), textHash(prompt.replace('spaced words', 'spacedwords')));
+});
+
 test('semantic IDs prefer selection ID and split duplicate search IDs without reordering', async (t) => {
   const { page, messages } = await fixture(t,
     newUser('u1', 'One') + newAssistant('a1', 'First') +

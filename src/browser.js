@@ -85,6 +85,24 @@ export function composerEditReason({ insideUserMessage = false, visibleCancel = 
   return null;
 }
 
+// Rich user paragraphs wrap auto-linked URLs in visual mention chips. innerText
+// inserts a layout newline before these chips, although no space was submitted.
+// Read paragraph text structurally; preserve real paragraph/BR boundaries and
+// exclude only nodes explicitly marked as copy decoration by the page.
+export function readUserMessageDOMText(element) {
+  const rich = element.matches('.rich-text-user-turn') ? element : element.querySelector('.rich-text-user-turn');
+  const paragraphs = rich ? [...rich.children] : [];
+  if (paragraphs.length && paragraphs.every(node => node.tagName === 'P')) {
+    return paragraphs.map(paragraph => {
+      const copy = paragraph.cloneNode(true);
+      copy.querySelectorAll('[data-markdown-copy="exclude"]').forEach(node => node.remove());
+      copy.querySelectorAll('br').forEach(node => node.replaceWith('\n'));
+      return copy.textContent || '';
+    }).join('\n\n');
+  }
+  return element.innerText || element.textContent || '';
+}
+
 export function isProModel(value) {
   return /(^|[\s._-])pro($|[\s._-])/i.test(String(value || "").trim());
 }
@@ -3310,13 +3328,14 @@ export class ChatGPTBrowser {
    * layouts put a role node inside a section wrapper; SELECTORS excludes such
    * wrappers, so this remains compatible with older section-only layouts.
    */
-  async renderedConversationMessages() {
+  async renderedConversationMessages({ includeRawText = false } = {}) {
     const page = await this.page();
     const selector = [
       ...SELECTORS.userMessages,
       ...SELECTORS.assistantMessages,
     ].join(", ");
-    return page.locator(selector).evaluateAll((elements) =>
+    const locator = page.locator(selector);
+    const messages = await locator.evaluateAll((elements, includeRawText) =>
       elements.map((element, index) => ({
         index,
         author:
@@ -3334,8 +3353,14 @@ export class ChatGPTBrowser {
           element.id ||
           null,
         text: element.innerText || element.textContent || "",
+        ...(includeRawText ? { rawText: element.textContent || "", rawHTML: element.innerHTML } : {}),
       })),
+      includeRawText,
     );
+    for (const message of messages) {
+      if (message.author === 'user') message.text = await locator.nth(message.index).evaluate(readUserMessageDOMText);
+    }
+    return messages;
   }
 
   async conversationApiTranscript() {
@@ -3594,7 +3619,7 @@ export class ChatGPTBrowser {
         element.id ||
         null,
     }));
-    return { count, lastText: detail.text, lastId: detail.lastId };
+    return { count, lastText: await last.evaluate(readUserMessageDOMText), lastId: detail.lastId };
   }
 
   async conversationTurnStats() {
@@ -4590,7 +4615,7 @@ export class ChatGPTBrowser {
     const latestUserText = transcript
       ? transcript.messages.findLast((message) => message.author === "user")?.text.trim() || null
       : renderedUserCount
-        ? (await user.last().innerText()).trim()
+        ? (await user.last().evaluate(readUserMessageDOMText)).trim()
         : null;
     const latestAssistantText = transcript
       ? transcript.messages.findLast((message) => message.author === "assistant")?.text.trim() || null
