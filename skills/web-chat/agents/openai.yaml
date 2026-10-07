@@ -1,7 +1,7 @@
 interface:
   display_name: "web-chat 网页专家"
-  short_description: "调用 ChatGPT 或 Gemini 网页专家，发送相关资料并取回完整答复"
-  default_prompt: "使用 $web-chat，将当前任务的问题、相关上下文和已授权文件交给网页专家，等待完整回复后继续完成任务。"
+  short_description: "通过 MCP 专用浏览器咨询 ChatGPT 或 Gemini，取回完整答复"
+  default_prompt: "使用 $web-chat，通过 web-chat MCP 自动启动或复用专用浏览器，将当前任务的问题、上下文和已授权文件交给网页专家，等待完整回复后继续完成任务；不要接管日常 Chrome，MCP 不可用时报告原因。"
 dependencies:
   tools:
     - type: "mcp"
