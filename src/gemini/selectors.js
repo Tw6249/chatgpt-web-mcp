@@ -5,6 +5,7 @@ export const SELECTORS = {
   stop: ['button[aria-label="Stop response"]', 'button[aria-label="Stop generating"]', 'button[aria-label="停止回答"]', 'button[aria-label="停止生成"]', 'button[aria-label="停止回复"]', 'button.stop-button'],
   model: ['button[aria-label*="Open mode picker"]', 'button[aria-label*="打开模式选择器"]', 'button[aria-label*="Choose model"]', 'button[aria-label*="选择模型"]', 'button.input-area-switch'],
   models: '[role="menuitemradio"], [role="menuitem"], [role="option"]',
+  modelMenu: '[data-test-id="gem-mode-menu"], [role="menu"], [role="listbox"]',
   user: 'user-query',
   assistant: 'model-response',
   answer: 'message-content .markdown, .model-response-text .markdown, message-content',
