@@ -1,5 +1,17 @@
 # Gemini validation
 
+## 0.7.6 model-menu state correction — 2026-10-07
+
+The live model picker exposed an Escape-dismissal mismatch: Escape hid the menu, but the next trigger click did not reopen it; a second click did. The old list/select/verify sequence used Escape after each operation, producing either a menu timeout or a misleading `THINKING_UNAVAILABLE` error even though Extended thinking was visible and enabled when the menu was opened correctly.
+
+Model and thinking operations now reuse an already-open menu, scope options to its visible container, and close it through the model-picker button with a confirmed hidden-state wait. A stale trigger left by an earlier Escape allows one bounded recovery click, respecting the existing operation interval. A picker that still fails to open reports `MODEL_MENU_NOT_OPEN`; this is distinct from a missing or disabled setting in an open menu. No prompt retry, model downgrade, page reload, or task-state reset is involved.
+
+Offline regression fixtures reproduce the Escape-stale trigger, hidden stale options, reconnecting with the picker open, recovery from a previous Escape, and a picker that never opens. Existing tests also cover idempotent thinking selection and missing or ineffective controls.
+
+Validation: all 102 unit tests and 54 offline browser tests passed, along with the 63-tool MCP smoke check, package dry run, and whitespace checks.
+
+Live acceptance used the dedicated Gemini session through a fresh stdio MCP process. Listing models followed by two consecutive selections of `3.8 Flash` with Extended thinking enabled returned `selectionVerified: true`, `extendedThinking: true`, and `thinkingVerified: true` both times. No prompt or attachment was sent. This validates menu/settings handling on the observed UI; it does not address the separate provider refusals described below.
+
 ## 0.7.4 initialization correction — 2026-10-06
 
 New named tabs previously called `newChat()` immediately after navigation. If Gemini had not mounted its composer, this reported `LOGIN_REQUIRED` for a signed-in account; a later reconnect skipped the incomplete initialization. The controller now waits for the composer or explicit sign-in UI, marks initialization only after readiness, and avoids the second navigation. A loading timeout reports `PAGE_NOT_READY`. Retrying initialization on a bound tab preserves its draft.

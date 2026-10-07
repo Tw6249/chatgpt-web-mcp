@@ -22,8 +22,8 @@ const fixtureHTML = `<!doctype html><html><body>
 <a href="/app/older">Previous chat</a>
 <main id="messages"></main>
 <rich-textarea><div contenteditable="true" role="textbox" aria-label="Enter a prompt here"></div></rich-textarea>
-<button aria-label="Open mode picker" onclick="document.querySelector('#models').hidden=false">Fast</button>
-<div id="models" hidden><button role="menuitem" data-mode-id="fixture-mode" onclick="document.querySelector('[aria-label=\\'Open mode picker\\']').textContent='Thinking';this.classList.add('selected');this.parentElement.hidden=true"><span class="label">Thinking</span><span class="sublabel">Advanced reasoning</span></button><button role="menuitem">Extended thinking</button></div>
+<button aria-label="Open mode picker" onclick="document.querySelector('#models').hidden=!document.querySelector('#models').hidden">Fast</button>
+<div id="models" role="menu" hidden><button role="menuitem" data-mode-id="fixture-mode" onclick="document.querySelector('[aria-label=\\'Open mode picker\\']').textContent='Thinking';this.classList.add('selected');this.parentElement.hidden=true"><span class="label">Thinking</span><span class="sublabel">Advanced reasoning</span></button><button role="menuitem">Extended thinking</button></div>
 <input type="file" multiple onchange="for (const f of this.files) {const e=document.createElement('file-preview'); e.textContent=f.name; document.body.append(e)}">
 <button aria-label="Send message" onclick="send()">Send</button>
 <script>
@@ -217,6 +217,67 @@ test('Extended thinking is verified separately, idempotent, and fails closed on 
   await page.getByRole('menuitem', { name: 'Extended thinking', includeHidden: true }).evaluate(e => e.remove());
   b.config.actionTimeout = 200;
   await assert.rejects(b.setExtendedThinking(true), e => e.code === 'THINKING_UNAVAILABLE');
+  assert.equal(await page.evaluate(() => sendCount), 0);
+});
+
+async function staleEscapeMenu(page) {
+  await page.evaluate(() => {
+    const menu = document.querySelector('#models');
+    const button = document.querySelector('[aria-label="Open mode picker"]');
+    window.menuOpen = false; window.escapeCount = 0; window.toggleCount = 0;
+    button.onclick = () => { window.menuOpen = !window.menuOpen; menu.hidden = !window.menuOpen; };
+    // Reproduce the live popover: Escape hides the DOM but leaves the trigger
+    // open, so the next trigger click closes it without displaying anything.
+    document.addEventListener('keydown', e => { if (e.key === 'Escape') { window.escapeCount++; menu.hidden = true; } });
+    for (const item of menu.querySelectorAll('[role="menuitem"]')) item.onclick = () => {
+      if (item.hasAttribute('data-mode-id')) { item.classList.add('selected'); button.textContent = 'Thinking'; }
+      else { window.toggleCount++; item.classList.toggle('selected'); }
+      menu.hidden = true; window.menuOpen = false;
+    };
+  });
+}
+
+test('model and thinking verification survive Escape-stale popovers without using Escape', async t => {
+  const { b, page } = await fixture(t);
+  await staleEscapeMenu(page);
+  // A hidden stale option must not block readiness or enter the model list.
+  await page.evaluate(() => { const old = document.createElement('button'); old.hidden = true; old.setAttribute('role', 'menuitem'); old.textContent = 'Old model'; document.body.prepend(old); });
+  const models = await b.listModels();
+  assert.deepEqual(models.models.map(m => m.name), ['Thinking']);
+  assert.equal(await page.locator('#models').isVisible(), false);
+  const result = await b.selectModel('Thinking', { extended_thinking: true });
+  assert.equal(result.selectionVerified, true);
+  assert.equal(result.extendedThinking, true); assert.equal(result.thinkingVerified, true);
+  // Reconnect with the picker already open: do not blindly toggle it closed.
+  await page.getByRole('button', { name: 'Open mode picker' }).click();
+  const next = new GeminiBrowser(b.config, b.runtime);
+  assert.equal((await next.setExtendedThinking(true)).thinkingVerified, true);
+  assert.equal(await page.evaluate(() => toggleCount), 1);
+  assert.equal(await page.evaluate(() => escapeCount), 0);
+  assert.equal(await page.evaluate(() => menuOpen), false);
+  assert.equal(await page.evaluate(() => sendCount), 0);
+});
+
+test('model menu recovers one stale trigger left by an earlier Escape', async t => {
+  const { b, page } = await fixture(t);
+  await staleEscapeMenu(page);
+  await page.getByRole('button', { name: 'Open mode picker' }).click();
+  await page.keyboard.press('Escape');
+  b.config.actionTimeout = 250;
+  assert.equal((await b.listModels()).models[0].name, 'Thinking');
+  assert.equal(await page.evaluate(() => menuOpen), false);
+  assert.equal(await page.evaluate(() => escapeCount), 1);
+  assert.equal(await page.evaluate(() => sendCount), 0);
+});
+
+test('failure to open the picker is not reported as an unavailable thinking setting', async t => {
+  const { b, page } = await fixture(t);
+  await page.getByRole('button', { name: 'Open mode picker' }).evaluate(e => {
+    window.pickerClicks = 0; e.onclick = () => { window.pickerClicks++; };
+  });
+  b.config.actionTimeout = 200;
+  await assert.rejects(b.setExtendedThinking(true), { code: 'MODEL_MENU_NOT_OPEN' });
+  assert.equal(await page.evaluate(() => pickerClicks), 2);
   assert.equal(await page.evaluate(() => sendCount), 0);
 });
 

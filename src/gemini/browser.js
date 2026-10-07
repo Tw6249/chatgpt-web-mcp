@@ -336,19 +336,54 @@ export class GeminiBrowser {
 
   async listModels() {
     await this.editable(); await this.throttle("change");
-    const button = await this.modelButton();
-    await button.click();
-    const page = await this.page();
+    const menu = await this.openModelMenu();
     try {
-      await page.locator(SELECTORS.models).first().waitFor({ state: "visible" });
-      return { models: (await this.modelOptions()).map(({ target, ...value }) => value) };
-    } finally { await page.keyboard.press("Escape"); }
+      return { models: (await this.modelOptions(menu)).map(({ target, ...value }) => value) };
+    } finally { await this.closeModelMenu(); }
   }
 
-  async modelOptions() {
+  async visibleModelMenu() {
     const page = await this.page();
+    return page.locator(`:is(${SELECTORS.modelMenu}):visible`).filter({ has: page.locator(SELECTORS.models) });
+  }
+
+  async openModelMenu() {
+    const menu = await this.visibleModelMenu();
+    // Escape can hide Gemini's popover without resetting its trigger state.
+    // In that case the first click only resets the trigger; permit one recovery
+    // click, and distinguish failure to open from an unavailable setting.
+    for (let attempt = 0; attempt < 2; attempt++) {
+      if (await menu.count() === 1) return menu;
+      if (await menu.count() > 1) throw new WebUIError('MODEL_MENU_AMBIGUOUS', 'Multiple model-menu candidates are visible; nothing was selected.');
+      if (attempt) await this.throttle('change');
+      await (await this.modelButton()).click();
+      try {
+        await menu.waitFor({ state: 'visible', timeout: this.config.actionTimeout });
+        return menu;
+      } catch (error) {
+        if (error.name !== 'TimeoutError') throw error;
+      }
+    }
+    throw new WebUIError('MODEL_MENU_NOT_OPEN', 'Gemini model menu did not open after one recovery click; model and thinking availability could not be checked.');
+  }
+
+  async closeModelMenu() {
+    const menu = await this.visibleModelMenu();
+    if (!await menu.count()) return;
+    // Use the same trigger to close it, rather than Escape, and wait for the
+    // actual menu state before the next selection/verification operation.
+    await (await this.modelButton()).click();
+    try { await menu.waitFor({ state: 'hidden', timeout: this.config.actionTimeout }); }
+    catch (error) {
+      if (error.name !== 'TimeoutError') throw error;
+      throw new WebUIError('MODEL_MENU_NOT_CLOSED', 'Gemini model menu did not close; stop before another settings operation.');
+    }
+  }
+
+  async modelOptions(menu) {
+    menu ??= await this.visibleModelMenu();
     const items = [];
-    for (const target of await page.locator(SELECTORS.models).all()) {
+    for (const target of await menu.locator(SELECTORS.models).all()) {
       if (!await target.isVisible()) continue;
       items.push({ target, ...await target.evaluate((e) => ({
         mode: e.hasAttribute('data-mode-id'),
@@ -367,16 +402,16 @@ export class GeminiBrowser {
     if (typeof enabled !== 'boolean') throw new WebUIError('INVALID_ARGUMENT', 'extended_thinking must be boolean.');
     const inspect = async (change) => {
       await this.editable(); await this.throttle('change');
-      await (await this.modelButton()).click();
-      const page = await this.page();
+      const menu = await this.openModelMenu();
       try {
-        const item = page.getByRole('menuitem', { name: /Extended thinking/i });
-        await item.waitFor({ state: 'visible', timeout: this.config.actionTimeout }).catch(() => {});
+        const item = menu.getByRole('menuitem', { name: /Extended thinking/i });
+        try { await item.waitFor({ state: 'visible', timeout: this.config.actionTimeout }); }
+        catch (error) { if (error.name !== 'TimeoutError') throw error; }
         if (await item.count() !== 1 || !await item.isVisible() || !await item.isEnabled()) throw new WebUIError('THINKING_UNAVAILABLE', 'Extended thinking is unavailable in the current Gemini model menu.');
         const selected = await item.evaluate(e => e.classList.contains('selected') || e.getAttribute('aria-checked') === 'true' || e.getAttribute('aria-selected') === 'true');
         if (change && selected !== enabled) { await item.click(); return null; }
         return selected;
-      } finally { await page.keyboard.press('Escape'); }
+      } finally { await this.closeModelMenu(); }
     };
     let selected = await inspect(true);
     if (selected === null) selected = await inspect(false);
@@ -386,14 +421,12 @@ export class GeminiBrowser {
 
   async selectModel(model, { extended_thinking } = {}) {
     await this.editable(); await this.throttle("change");
-    const button = await this.modelButton();
-    await button.click(); const page = await this.page();
+    const menu = await this.openModelMenu();
     try {
-      await page.locator(SELECTORS.models).first().waitFor({ state: "visible" });
-      const matches = (await this.modelOptions()).filter((item) => normalize(item.name) === normalize(model));
+      const matches = (await this.modelOptions(menu)).filter((item) => normalize(item.name) === normalize(model));
       if (matches.length !== 1 || matches[0].disabled || !await matches[0].target.isEnabled()) throw new WebUIError("MODEL_UNAVAILABLE", "Use one exact available name returned by gemini_list_models.");
       await matches[0].target.click();
-    } finally { await page.keyboard.press("Escape"); }
+    } finally { await this.closeModelMenu(); }
     const checked = await this.listModels();
     if (!checked.models.some((item) => normalize(item.name) === normalize(model) && item.selected)) throw new WebUIError("MODEL_NOT_CONFIRMED", "The model selection could not be confirmed from Gemini's menu.");
     const thinking = extended_thinking === undefined ? {} : await this.setExtendedThinking(extended_thinking);
