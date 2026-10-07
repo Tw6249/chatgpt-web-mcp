@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { chromium } from 'playwright-core';
 import { geminiConfig } from '../src/gemini/config.js';
 import { sessionPage, targetId } from '../src/shared/sessions.js';
+import { ChatGPTBrowser } from '../src/browser.js';
 let chrome;
 before(async () => { chrome = await chromium.launch({ executablePath: geminiConfig().executable || chromium.executablePath(), headless: true }); });
 after(async () => { await chrome?.close(); });
@@ -52,4 +53,25 @@ test('legacy calls cannot steal managed tabs; ambiguous unmanaged tabs are rejec
   const extra = await f.context.newPage(); await extra.goto('https://chatgpt.com/');
   await assert.rejects(f.bind(), { code: 'AMBIGUOUS_TAB' });
   assert.equal(await f.bind('a'), a);
+});
+
+test('ChatGPT page operations retain the selected target even when another ChatGPT tab is first', async t => {
+  const f = await fixture(t);
+  const legacy = await f.context.newPage(); await legacy.goto('https://chatgpt.com/');
+  await legacy.locator('textarea').fill('legacy draft');
+  const a = await f.bind('a'), b = await f.bind('b');
+  await a.locator('textarea').fill('session A draft');
+  // Exercise the production page() method; the launch boundary supplies the
+  // real target selected by sessionPage, without accessing a signed-in profile.
+  const browser = new ChatGPTBrowser({ sessionId: 'b' });
+  browser.launch = async () => b;
+  const selected = await browser.page();
+  assert.equal(selected, b);
+  await selected.locator('textarea').fill('session B draft');
+  assert.equal(await legacy.locator('textarea').inputValue(), 'legacy draft');
+  assert.equal(await a.locator('textarea').inputValue(), 'session A draft');
+  assert.equal(await b.locator('textarea').inputValue(), 'session B draft');
+  await b.goto('https://unrelated.example/');
+  await assert.rejects(browser.page(), { code: 'SESSION_NAVIGATED' });
+  assert.equal(await a.locator('textarea').inputValue(), 'session A draft');
 });

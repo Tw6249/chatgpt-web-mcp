@@ -24,11 +24,16 @@ across the provider, not just inside a session.
 `chat_open` and `chat_archive` also accept `session_id`. `chat_result`,
 `chat_cancel` and `chat_abandon` recover it from the persisted task. Omitting
 `session_id` uses the unmanaged legacy tab, retaining its existing guards.
-An uncertain task with a known conversation blocks only its own session. It
-is never cleared to permit unrelated new work. A ChatGPT send whose permanent
-address is still unknown must first be recovered, because some deployments
-synchronize the selected conversation across tabs. Two tabs cannot submit
-into the same active conversation.
+An uncertain task blocks only its own session, including a task whose permanent
+conversation address is still unknown or whose original tab has closed. Its
+request ID and journal entry remain reserved; unrelated work does not clear or
+resend it. Two tabs cannot submit into the same known active conversation.
+
+Version 0.7.7 fixes a ChatGPT page-selection bug: after resolving a session's
+target, an older page accessor selected the first ChatGPT tab again. Every page
+operation now retains the resolved target. The old provider-wide unresolved-send
+guard is removed; same-session occupancy, conversation identity, drafts,
+idempotency and account-wide rate limits remain enforced.
 
 ## Isolation and limits
 

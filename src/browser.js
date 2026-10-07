@@ -4,6 +4,7 @@ import net from "node:net";
 import path from "node:path";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { sessionPage, sessionView, mergeSessionView, validateSessionId } from './shared/sessions.js';
+import { WebUIError } from './shared/persistent-browser.js';
 
 import { chromium } from "playwright-core";
 
@@ -1490,12 +1491,14 @@ export class ChatGPTBrowser {
   }
 
   async page() {
-    await this.launch();
-    const liveChatGPTPage = this.#context
-      .pages()
-      .find((page) => !page.isClosed() && /chatgpt\.com/i.test(page.url()));
-    if (liveChatGPTPage) this.#page = liveChatGPTPage;
-    return this.#page;
+    // launch() resolves this session's persisted CDP target (or an unowned
+    // legacy target). Selecting the first provider tab here defeats that
+    // binding and can send, navigate or read another session's conversation.
+    const page = await this.launch();
+    if (new URL(page.url()).origin !== new URL(CHATGPT_URL).origin) {
+      throw new WebUIError('SESSION_NAVIGATED', 'The selected tab is no longer on the provider site. Restore its original page before continuing.');
+    }
+    return page;
   }
 
   async openLogin() {

@@ -60,8 +60,8 @@ export function chatgptProvider(browser) {
       if (files.length) await browser.uploadFiles(files);
       await browser.writePrompt(prompt);
       const sent = await browser.submitPrompt({ wait: false, refresh: false });
-      // Keep the short submission operation locked until the permanent URL
-      // arrives, before another tab can synchronize the selected conversation.
+      // Keep submission locked briefly so the permanent conversation URL can
+      // be recorded and checked against the expected user turn.
       if (browser.waitForConversationURL) sent.url = await browser.waitForConversationURL();
       return sent;
     },

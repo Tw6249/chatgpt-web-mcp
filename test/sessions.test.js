@@ -61,6 +61,41 @@ test('uncertain legacy task does not block named session or get released by its 
   assert.equal((await readState(f.journal)).version, 2);
 });
 
+for (const oldSession of [undefined, 'old-session']) {
+  for (const provisional of [false, true]) {
+    test(`unbound ${oldSession || 'legacy'} task (${provisional ? 'provisional URL' : 'root URL'}) preserves identity without blocking another tab`, async t => {
+      const f = await fixture(t);
+      const oldAdapter = f.kernel.adapter('chatgpt', oldSession);
+      const oldPage = f.pages.get(oldSession || 'legacy');
+      oldPage.url = 'https://example.com/';
+      oldAdapter.isRoot = url => url === 'https://example.com';
+      oldAdapter.isProvisional = url => url.includes('/c/WEB:');
+      oldAdapter.restore = async () => assert.fail('new work must not restore an unresolved old tab');
+      const send = oldAdapter.send;
+      oldAdapter.send = async input => {
+        await send(input);
+        if (provisional) oldPage.url = 'https://example.com/c/WEB:temporary';
+        throw new Error('connection lost after submit');
+      };
+      const old = await f.kernel.send(f.input(oldSession));
+      assert.equal(old.state, 'uncertain'); assert.equal(old.conversation_url, undefined);
+      const before = (await readState(f.journal)).tasks[old.task_id];
+      const oldSnapshot = { ...oldPage };
+      const fresh = f.kernel.adapter('chatgpt', 'fresh');
+      fresh.isRoot = oldAdapter.isRoot; fresh.isProvisional = oldAdapter.isProvisional;
+      fresh.restore = async () => assert.fail('first send must not restore another session');
+      const current = await f.kernel.send(f.input('fresh'));
+      assert.equal(current.state, 'submitted');
+      assert.deepEqual(oldPage, oldSnapshot);
+      assert.deepEqual((await readState(f.journal)).tasks[old.task_id], before);
+      await assert.rejects(f.kernel.send({ ...f.input(oldSession), request_id: 'old-again' }), { code: 'TASK_ACTIVE' });
+      const restarted = new TaskKernel([f.provider], { directory: f.directory });
+      assert.equal((await restarted.send(f.input(oldSession))).replayed, true);
+      assert.deepEqual(f.sends, [oldSession || 'legacy', 'fresh']);
+    });
+  }
+}
+
 test('session, Pro tier and web search are part of idempotency; settings are verified before send', async t => {
   const f = await fixture(t);
   const input = { ...f.input('research'), answer_tier: 'Pro', web_search: true };
