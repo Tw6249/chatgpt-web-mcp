@@ -49,7 +49,9 @@ export const SELECTORS = {
     "section[data-turn='user']:not(:has([data-message-author-role='user']))",
     // The bubble also contains an ellipsis and a localized 'Show more' button.
     // Including them changes the prompt hash and strands a submitted task.
-    "[data-user-message-bubble] [data-search-result-target]:not([data-message-author-role='user'] *):not(article[data-turn='user'] *):not(section[data-turn='user'] *)",
+    // Links inside that body can carry the same search-target attribute.
+    // Only the outer body is a message; nested targets must not add turns.
+    "[data-user-message-bubble] [data-search-result-target]:not([data-search-result-target] *):not([data-message-author-role='user'] *):not(article[data-turn='user'] *):not(section[data-turn='user'] *)",
   ],
   fileInput: [
     "input[type='file']",

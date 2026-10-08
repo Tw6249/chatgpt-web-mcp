@@ -32,6 +32,7 @@ for (const label of ['发送', 'Send', 'Send prompt']) {
       document.addEventListener('keydown', () => window.keypresses++);
     });
     const sender = {
+      page: async () => page,
       firstVisible: async selectors => page.locator(selectors.join(', ')).first(),
       click: async target => target.click(),
     };
@@ -43,12 +44,62 @@ for (const label of ['发送', 'Send', 'Send prompt']) {
 test('a missing or disabled send control preserves the draft without Enter fallback', async t => {
   const { page } = await fixture(t, '<div contenteditable="true">Preserved draft</div><button aria-label="发送" disabled></button>');
   for (const button of [null, page.locator('button')]) {
+    if (!button) await page.locator('button').evaluate(node => { node.style.display = 'none'; });
+    else await button.evaluate(node => { node.style.display = ''; });
     await assert.rejects(ChatGPTBrowser.prototype.clickSendButton.call({
+      page: async () => page,
       firstVisible: async () => button,
       click: async () => assert.fail('must not click'),
-    }), error => error.details.code === 'SEND_CONTROL_UNAVAILABLE');
+    }, { timeoutMs: 150 }), error => error.details.code === 'SEND_CONTROL_UNAVAILABLE');
   }
   assert.equal(await page.locator('[contenteditable]').innerText(), 'Preserved draft');
+});
+
+for (const readiness of ['enabled later', 'mounted later', 'hidden duplicate']) {
+  test(`send waits for attachment readiness: ${readiness}`, async t => {
+    const { page } = await fixture(t, '<form><div contenteditable="true">Preserved draft</div></form>');
+    await page.evaluate(readiness => {
+      window.submissions = 0; window.keypresses = 0;
+      const form = document.querySelector('form');
+      form.addEventListener('submit', e => { e.preventDefault(); window.submissions++; });
+      document.addEventListener('keydown', () => window.keypresses++);
+      if (readiness === 'hidden duplicate') form.insertAdjacentHTML('beforeend', '<button aria-label="Send" style="display:none"></button>');
+      const button = document.createElement('button'); button.setAttribute('aria-label', 'Send');
+      if (readiness !== 'mounted later') { button.disabled = true; form.append(button); }
+      setTimeout(() => { form.append(button); button.disabled = false; }, 250);
+    }, readiness);
+    await ChatGPTBrowser.prototype.clickSendButton.call({
+      page: async () => page,
+      firstVisible: async selectors => page.locator(selectors.join(', ')).first(),
+      click: async target => target.click(),
+    }, { timeoutMs: 2000 });
+    assert.deepEqual(await page.evaluate(() => [window.submissions, window.keypresses]), [1, 0]);
+  });
+}
+
+test('send readiness cancellation does not click or alter the draft', async t => {
+  const { page } = await fixture(t, '<div contenteditable="true">Preserved draft</div><button aria-label="Send" disabled></button>');
+  const controller = new AbortController();
+  const reason = new Error('cancel readiness');
+  const timer = setTimeout(() => controller.abort(reason), 100);
+  t.after(() => clearTimeout(timer));
+  await assert.rejects(ChatGPTBrowser.prototype.clickSendButton.call({
+    page: async () => page, signal: () => controller.signal,
+    firstVisible: async () => page.locator('button'),
+    click: async () => assert.fail('must not click'),
+  }, { timeoutMs: 2000 }), error => error.details?.cancelled === true && error.details.cause === reason.message);
+  assert.equal(await page.locator('[contenteditable]').innerText(), 'Preserved draft');
+});
+
+test('an ambiguous click error is never retried', async t => {
+  const { page } = await fixture(t, '<button aria-label="Send"></button>');
+  let attempts = 0;
+  const failure = new Error('connection lost after click');
+  await assert.rejects(ChatGPTBrowser.prototype.clickSendButton.call({
+    page: async () => page,
+    click: async () => { attempts++; throw failure; },
+  }, { timeoutMs: 2000 }), failure);
+  assert.equal(attempts, 1);
 });
 const assistantSelector = SELECTORS.assistantMessages.join(', ');
 const escapeHTML = (text) => String(text).replace(/[&<>"']/g, (c) => ({
@@ -168,6 +219,37 @@ test('mixed nested legacy and semantic markup is counted once in document order'
     { index: 4, author: 'user', id: 'u3', text: 'Third prompt' },
     { index: 5, author: 'assistant', id: 'a3', text: 'Third answer' },
   ]);
+});
+
+test('nested link search targets do not create extra user turns or replace the prompt', async (t) => {
+  const prompt = 'Read https://example.org/paper then compare all constraints.';
+  const { page, reader, messages } = await fixture(t, newUser('nested-link', prompt));
+  await page.locator('[data-search-result-target]').evaluate(node => {
+    node.innerHTML = 'Read <a data-search-result-target href="https://example.org/paper">https://example.org/paper</a> then compare all constraints.';
+  });
+  assert.equal(await page.locator(userSelector).count(), 1);
+  assert.deepEqual(await ChatGPTBrowser.prototype.userMessageSnapshot.call(reader), {
+    count: 1, lastText: prompt, lastId: 'nested-link',
+  });
+  const actual = await messages();
+  assert.equal(actual.length, 1);
+  assert.equal(textHash(actual[0].text), textHash(prompt));
+  await page.locator('body').evaluate(node => node.insertAdjacentHTML('beforeend',
+    '<div data-user-message-bubble data-chatgpt-search-message-ids="genuine-second"><div data-search-result-target>A genuine second message</div></div>'));
+  assert.equal(await page.locator(userSelector).count(), 2);
+});
+
+test('rich paragraph mention chips preserve adjacent punctuation and real whitespace', async (t) => {
+  const prompt = 'First paragraph.\n\n论文（https://example.org/p）结论。 Keep spaced words.\nA new line.';
+  const { page, reader, messages } = await fixture(t, newUser('rich-link', 'placeholder'));
+  await page.locator('[data-search-result-target]').evaluate(node => {
+    node.innerHTML = '<div class="rich-text-user-turn"><p>First paragraph.</p><p>论文（<a data-search-result-target style="display:block"><span data-markdown-copy="exclude">icon</span>https://example.org/p</a>）结论。 Keep spaced words.<br>A new line.</p></div>';
+  });
+  assert.equal(await page.locator(userSelector).count(), 1);
+  const snapshot = await ChatGPTBrowser.prototype.userMessageSnapshot.call(reader);
+  assert.equal(textHash(snapshot.lastText), textHash(prompt));
+  assert.equal(textHash((await messages())[0].text), textHash(prompt));
+  assert.notEqual(textHash(snapshot.lastText), textHash(prompt.replace('spaced words', 'spacedwords')));
 });
 
 test('semantic IDs prefer selection ID and split duplicate search IDs without reordering', async (t) => {

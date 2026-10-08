@@ -1,6 +1,6 @@
 {
   "name": "chatgpt-web-mcp",
-  "version": "0.7.6",
+  "version": "0.7.9",
   "type": "module",
   "description": "A local MCP server for ChatGPT and Gemini web UIs with isolated persistent browser profiles.",
   "license": "MIT",
