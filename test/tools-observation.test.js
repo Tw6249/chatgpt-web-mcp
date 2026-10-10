@@ -2,12 +2,16 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { registerUnifiedTools } from '../src/core/tools.js';
 
-function setup() {
+function setup(gemini = false) {
   const handlers = new Map(), calls = [];
   const browser = {
     status: async () => ({ url: 'https://chatgpt.com/c/test' }),
     renderedConversationMessages: async () => [{ author: 'user', id: 'u1', text: 'The original question' }],
     getLatestResponse: async options => {
+      if (gemini) {
+        assert.deepEqual(options, { wait: false });
+        return { text: 'New manually requested answer', complete: true };
+      }
       assert.deepEqual(options, { includeTranscript: false });
       return { lastUserMessage: 'The original question', response: '', generating: true };
     },
@@ -44,9 +48,18 @@ test('normal status does not expose message text', async () => {
   assert.equal(calls.length, 1);
 });
 
-test('unsupported provider observation fails before accessing a browser', async () => {
-  const { handlers, calls } = setup();
-  const result = await handlers.get('chat_status')({ provider: 'gemini', include_messages: true }, {});
-  assert.equal(result.isError, true);
-  assert.equal(calls.length, 0);
+test('Gemini latest page observation preserves uncertain tracking and uses the named session', async () => {
+  const { handlers, calls } = setup(true);
+  const result = await handlers.get('chat_status')({ provider: 'gemini', session_id: 'study', include_messages: true }, {});
+  const body = JSON.parse(result.content[0].text);
+  assert.equal(body.observed.text, 'New manually requested answer');
+  assert.equal(body.observed.complete, true);
+  assert.equal(body.active_tasks[0].state, 'uncertain');
+  assert.equal(calls.length, 2);
+  for (const {provider, options} of calls) {
+    assert.equal(provider, 'gemini');
+    assert.equal(options.readOnly, true);
+    assert.equal(options.sessionId, 'study');
+    assert.equal(options.conversationChanged, false);
+  }
 });
