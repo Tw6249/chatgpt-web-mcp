@@ -404,19 +404,41 @@ export class GeminiBrowser {
       await this.editable(); await this.throttle('change');
       const menu = await this.openModelMenu();
       try {
+        // Newer menus replace the binary switch with Low / Medium / High
+        // settings rows. Keep the boolean API: true requests High, false Low.
+        // Only inspect settings inside this menu, never model names or page text.
+        const levels = [];
+        for (const target of await menu.locator(SELECTORS.models).all()) {
+          if (!await target.isVisible()) continue;
+          const detail = await target.evaluate(e => ({
+            mode: e.hasAttribute('data-mode-id'),
+            name: (e.querySelector('.label') || e).innerText.trim(),
+            selected: e.classList.contains('selected') || e.getAttribute('aria-checked') === 'true' || e.getAttribute('aria-selected') === 'true',
+            disabled: e.getAttribute('aria-disabled') === 'true' || e.disabled === true,
+          }));
+          if (!detail.mode && /^(Low|Medium|High)$/i.test(detail.name)) levels.push({ target, ...detail });
+        }
+        if (levels.length) {
+          const wanted = enabled ? 'High' : 'Low';
+          const matches = levels.filter(item => item.name.toLowerCase() === wanted.toLowerCase());
+          if (matches.length > 1 || levels.filter(item => item.selected).length > 1) throw new WebUIError('THINKING_AMBIGUOUS', 'Gemini thinking levels are ambiguous; nothing was selected.');
+          if (matches.length !== 1 || matches[0].disabled || !await matches[0].target.isEnabled()) throw new WebUIError('THINKING_UNAVAILABLE', `Gemini thinking level ${wanted} is unavailable; no lower level was substituted.`);
+          if (change && !matches[0].selected) { await matches[0].target.click(); return null; }
+          return { selected: matches[0].selected ? enabled : !enabled, thinkingLevel: levels.find(item => item.selected)?.name || null };
+        }
         const item = menu.getByRole('menuitem', { name: /Extended thinking/i });
         try { await item.waitFor({ state: 'visible', timeout: this.config.actionTimeout }); }
         catch (error) { if (error.name !== 'TimeoutError') throw error; }
         if (await item.count() !== 1 || !await item.isVisible() || !await item.isEnabled()) throw new WebUIError('THINKING_UNAVAILABLE', 'Extended thinking is unavailable in the current Gemini model menu.');
         const selected = await item.evaluate(e => e.classList.contains('selected') || e.getAttribute('aria-checked') === 'true' || e.getAttribute('aria-selected') === 'true');
         if (change && selected !== enabled) { await item.click(); return null; }
-        return selected;
+        return { selected, thinkingLevel: selected ? 'Extended thinking' : 'Standard' };
       } finally { await this.closeModelMenu(); }
     };
-    let selected = await inspect(true);
-    if (selected === null) selected = await inspect(false);
-    if (selected !== enabled) throw new WebUIError('THINKING_NOT_CONFIRMED', 'Gemini did not confirm the requested Extended thinking setting.');
-    return { extendedThinking: selected, thinkingVerified: true };
+    let result = await inspect(true);
+    if (result === null) result = await inspect(false);
+    if (result.selected !== enabled) throw new WebUIError('THINKING_NOT_CONFIRMED', 'Gemini did not confirm the requested thinking setting.');
+    return { extendedThinking: result.selected, thinkingLevel: result.thinkingLevel, thinkingVerified: true };
   }
 
   async selectModel(model, { extended_thinking } = {}) {

@@ -1,5 +1,29 @@
 # Gemini validation
 
+## Thinking-level menu compatibility — 2026-10-10
+
+The dedicated live Gemini menu now exposes Low, Medium, and High beneath the
+model choices, replacing the previous Extended thinking toggle. The old lookup
+incorrectly reported THINKING_UNAVAILABLE while 3.8 Flash was selected at Low.
+
+The existing extended_thinking boolean remains compatible: true requests High
+on this menu, and false requests Low. Legacy binary toggles still work. The
+adapter distinguishes settings from model rows, scopes them to the visible
+model menu, and reopens the menu after a change to verify selection. Missing,
+disabled, ambiguous, or ineffective High controls fail closed without choosing
+a lower setting. Results expose the observed thinkingLevel.
+
+Live verification through a fresh stdio MCP connection returned selectedModel
+3.8 Flash, selectionVerified true, extendedThinking true, thinkingLevel High,
+and thinkingVerified true. The already-authorized research consultation was
+then submitted once; no synthetic prompt or identity probe was sent.
+
+Offline regressions cover High selection and readback, idempotence, Low
+selection, unrelated High text, missing/disabled High, ineffective clicks,
+duplicate High rows, and multiple selected levels, alongside legacy tests.
+Validation passed: 11 targeted offline browser tests and 16 Gemini/observation
+unit tests. Whitespace checks passed.
+
 ## 0.7.6 model-menu state correction — 2026-10-07
 
 The live model picker exposed an Escape-dismissal mismatch: Escape hid the menu, but the next trigger click did not reopen it; a second click did. The old list/select/verify sequence used Escape after each operation, producing either a menu timeout or a misleading `THINKING_UNAVAILABLE` error even though Extended thinking was visible and enabled when the menu was opened correctly.

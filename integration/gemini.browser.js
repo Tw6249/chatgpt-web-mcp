@@ -220,6 +220,65 @@ test('Extended thinking is verified separately, idempotent, and fails closed on 
   assert.equal(await page.evaluate(() => sendCount), 0);
 });
 
+async function levelThinkingMenu(page) {
+  await page.getByRole('menuitem', { name: 'Extended thinking', includeHidden: true }).evaluate(e => {
+    const menu = e.parentElement;
+    e.remove();
+    window.levelClicks = 0;
+    for (const level of ['Low', 'Medium', 'High']) {
+      const row = document.createElement('button');
+      row.setAttribute('role', 'menuitem');
+      row.setAttribute('data-thinking-fixture', level);
+      row.innerHTML = '<span class="label">' + level + '</span><span class="sublabel">Thinking detail</span>';
+      if (level === 'Low') row.classList.add('selected');
+      row.onclick = () => {
+        window.levelClicks++;
+        for (const sibling of menu.querySelectorAll('[data-thinking-fixture]')) sibling.classList.remove('selected');
+        row.classList.add('selected');
+        menu.hidden = true;
+      };
+      menu.append(row);
+    }
+  });
+}
+
+test('thinking levels select and reverify High, remain idempotent, and map false to Low', async t => {
+  const { b, page } = await fixture(t);
+  await levelThinkingMenu(page);
+  await page.locator('main').evaluate(e => { e.innerHTML = '<button role="menuitem" class="selected">High</button>'; });
+  const models = await b.listModels();
+  assert.deepEqual(models.models.map(item => item.name), ['Thinking']);
+  const result = await b.selectModel('Thinking', { extended_thinking: true });
+  assert.equal(result.selectionVerified, true);
+  assert.equal(result.thinkingLevel, 'High');
+  assert.equal(result.extendedThinking, true);
+  assert.equal(result.thinkingVerified, true);
+  assert.equal((await b.setExtendedThinking(true)).thinkingLevel, 'High');
+  assert.equal(await page.evaluate(() => levelClicks), 1);
+  const low = await b.setExtendedThinking(false);
+  assert.equal(low.thinkingLevel, 'Low'); assert.equal(low.extendedThinking, false);
+  assert.equal(await page.evaluate(() => levelClicks), 2);
+  assert.equal(await page.evaluate(() => sendCount), 0);
+});
+
+for (const failure of ['missing', 'disabled', 'ineffective', 'duplicate', 'multiple-selected']) {
+  test('thinking levels fail closed when High is ' + failure, async t => {
+    const { b, page } = await fixture(t);
+    await levelThinkingMenu(page);
+    await page.locator('[data-thinking-fixture="High"]').evaluate((e, failure) => {
+      if (failure === 'missing') e.remove();
+      if (failure === 'disabled') e.setAttribute('aria-disabled', 'true');
+      if (failure === 'ineffective') e.onclick = () => {};
+      if (failure === 'duplicate') e.after(e.cloneNode(true));
+      if (failure === 'multiple-selected') e.classList.add('selected');
+    }, failure);
+    const code = failure === 'ineffective' ? 'THINKING_NOT_CONFIRMED' : ['duplicate', 'multiple-selected'].includes(failure) ? 'THINKING_AMBIGUOUS' : 'THINKING_UNAVAILABLE';
+    await assert.rejects(b.setExtendedThinking(true), { code });
+    assert.equal(await page.evaluate(() => sendCount), 0);
+    assert.equal(await page.locator('[data-thinking-fixture="Low"]').getAttribute('class'), 'selected');
+  });
+}
+
 async function staleEscapeMenu(page) {
   await page.evaluate(() => {
     const menu = document.querySelector('#models');

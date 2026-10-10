@@ -23,7 +23,7 @@ export function registerUnifiedTools(server, kernel) {
     return { ...status, ...(observed ? { observed } : {}), session_id: i.session_id || null, ...await kernel.list(i.provider, 1) };
   });
   tool('chat_models', 'List names actually available on the selected provider session. Model names are provider-specific.', { provider, session_id }, (i, s) => run(i.provider, 'listModels', [], s, false, i.session_id));
-  tool('chat_select_model', 'Select and verify an exact available model name. Gemini optionally sets and verifies its separate Extended thinking toggle before sending.', { provider, session_id, model: z.string().min(1), extended_thinking: z.boolean().optional() }, (i, s) => {
+  tool('chat_select_model', 'Select and verify an exact available model name. For Gemini, extended_thinking=true verifies High on level menus or enables the legacy Extended thinking toggle; false verifies Low or disables the toggle. Returns the observed thinkingLevel.', { provider, session_id, model: z.string().min(1), extended_thinking: z.boolean().optional() }, (i, s) => {
     if (i.extended_thinking !== undefined && i.provider !== 'gemini') throw Object.assign(new Error('extended_thinking is supported only for Gemini.'), { code: 'INVALID_ARGUMENT' });
     return run(i.provider, 'selectModel', [i.model, { extended_thinking: i.extended_thinking }], s, false, i.session_id);
   });
