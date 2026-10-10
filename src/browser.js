@@ -3754,6 +3754,7 @@ export class ChatGPTBrowser {
     wait = true,
     timeoutMs = RESPONSE_TIMEOUT_MS,
     refresh = true,
+    beforeSubmit,
   } = {}) {
     const refreshResult = refresh
       ? await this.refreshBeforeSend({ reason: "submit-prompt" })
@@ -3777,6 +3778,7 @@ export class ChatGPTBrowser {
     const userBeforeSnapshot = await this.userMessageSnapshot();
     const userBefore = userBeforeSnapshot.count;
     await this.siteAction("send-prompt");
+    await beforeSubmit?.();
     await this.clickSendButton();
     await this.markSendPerformed();
 

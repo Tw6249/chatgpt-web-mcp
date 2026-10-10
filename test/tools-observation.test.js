@@ -40,6 +40,7 @@ test('normal status does not expose message text', async () => {
   const { handlers, calls } = setup();
   const result = await handlers.get('chat_status')({ provider: 'chatgpt', session_id: 'study' }, {});
   assert.equal('observed' in JSON.parse(result.content[0].text), false);
+  assert.equal(JSON.parse(result.content[0].text).active_task, null, 'another session must not appear as this session blocker');
   assert.equal(calls.length, 1);
 });
 

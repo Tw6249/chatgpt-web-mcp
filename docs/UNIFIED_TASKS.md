@@ -29,6 +29,22 @@ Use a new request ID for an intentionally new turn. Reusing an ID with different
 
 ## State and recovery
 
+Both providers now persist `submitting` immediately before the possible send click,
+after draft writing and upload verification. Errors during those preparation
+steps are terminal `failed` tasks, not ambiguous deliveries. Drafts are retained.
+After any possible click, uncertainty still blocks another submission.
+An acknowledgement timeout gets one read-only exact prompt/turn reconciliation;
+it never causes another click. `chat_status.active_task` refers to the requested
+session; `active_tasks` remains the provider-wide inventory.
+
+For an inspected, known-unsent Gemini draft, explicitly call `chat_send` with
+`existing_draft:true`, a new request ID, the exact original prompt and attachment
+paths. This verifies the existing text and exact attachment list, then submits
+without rewriting or reuploading. It does not abandon an uncertain task: that
+still requires user-authorized `chat_abandon` first. Replays of either request ID
+never send again. Long attachment labels use their chip-linked accessible full
+filename, not fuzzy matching of ellipsized display text.
+
 For ChatGPT read-only recovery inspection, `chat_status` accepts `include_messages: true` together with the original `session_id`. It returns currently rendered user/assistant text and generation state without sending, navigating, acknowledging delivery, or releasing the task. This output is private conversation data; do not paste it into public diagnostics. Normal status continues to omit message text. Use `chat_result` to reconcile the original task after inspecting it; its exact prompt and turn-count checks remain enforced.
 
 User-message extraction counts only outer search-target bodies, excluding nested link targets. For rich user paragraphs it preserves paragraph and line-break boundaries while removing page-marked copy decorations, so an auto-linked URL does not insert layout whitespace into the submitted prompt's identity.

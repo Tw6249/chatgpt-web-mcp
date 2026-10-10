@@ -13,19 +13,27 @@ async function stop(browser, selectors) {
 
 export function geminiProvider(browser) {
   return {
-    id: 'gemini', browser,
+    id: 'gemini', browser, stagedSend: true,
     localConfig: browser.config,
     capabilities: { files: true, models: true, history: true, archive: 'loaded-messages', cancellation: true, sessions: true, retry: true },
     isRoot: (url) => url === 'https://gemini.google.com/app',
-    async prepare() {
-      await browser.editable({ empty: true });
+    async prepare({ prompt, files, existing_draft } = {}) {
+      await browser.editable({ empty: !existing_draft });
+      if (existing_draft) {
+        const draft = await browser.snapshot();
+        const normalized = text => text.replace(/\s+/g, ' ').trim();
+        if (normalized(draft.draft) !== normalized(prompt)) throw new WebUIError('DRAFT_MISMATCH', 'Existing draft differs from the explicitly supplied prompt; nothing was sent.');
+        await browser.waitForUploads(files, { exact: true });
+      }
       const s = await browser.snapshot();
       return { url: s.url, userCount: s.userCount, responseCount: s.responseCount };
     },
-    async send({ prompt, files }) {
-      await browser.writePrompt(prompt);
-      if (files.length) await browser.uploadFiles(files);
-      return browser.submitPrompt({ wait: false });
+    async send({ prompt, files, existing_draft, beforeSubmit }) {
+      if (!existing_draft) {
+        await browser.writePrompt(prompt);
+        if (files.length) await browser.uploadFiles(files);
+      }
+      return browser.submitPrompt({ wait: false, beforeSubmit });
     },
     async inspect({ allowPageError = false } = {}) {
       const s = await browser.snapshot(); await browser.check(s, { allowPending: true });
@@ -40,7 +48,7 @@ export function geminiProvider(browser) {
 
 export function chatgptProvider(browser) {
   return {
-    id: 'chatgpt', browser,
+    id: 'chatgpt', browser, stagedSend: true,
     localConfig: { executable: CHROME_EXECUTABLE, browserState: BROWSER_STATE_FILE, runtimeState: RUNTIME_STATE_FILE, operationLock: OPERATION_LOCK_FILE },
     capabilities: { files: true, models: true, history: true, archive: 'provider-transcript', cancellation: true, sessions: true },
     isRoot: (url) => url === 'https://chatgpt.com',
@@ -56,10 +64,10 @@ export function chatgptProvider(browser) {
       if (s.generating) throw new WebUIError('GENERATING', 'ChatGPT is still generating.');
       return { url: s.url, userCount: s.userMessageCount, responseCount: s.assistantMessageCount };
     },
-    async send({ prompt, files }) {
+    async send({ prompt, files, beforeSubmit }) {
       if (files.length) await browser.uploadFiles(files);
       await browser.writePrompt(prompt);
-      const sent = await browser.submitPrompt({ wait: false, refresh: false });
+      const sent = await browser.submitPrompt({ wait: false, refresh: false, beforeSubmit });
       // Keep submission locked briefly so the permanent conversation URL can
       // be recorded and checked against the expected user turn.
       if (browser.waitForConversationURL) sent.url = await browser.waitForConversationURL();

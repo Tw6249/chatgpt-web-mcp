@@ -87,8 +87,9 @@ export class TaskKernel {
       return result;
     }, signal);
   }
-  async send({ provider: id, request_id, prompt, files = [], model, newConversation = false, session_id, answer_tier, web_search = false }, { signal } = {}) {
+  async send({ provider: id, request_id, prompt, files = [], model, newConversation = false, session_id, answer_tier, web_search = false, existing_draft = false }, { signal } = {}) {
     const adapter = this.adapter(id, session_id);
+    if (typeof existing_draft !== 'boolean' || (existing_draft && (id !== 'gemini' || model || newConversation))) throw new WebUIError('INVALID_DRAFT_RECOVERY', 'existing_draft requires Gemini and cannot change the model or conversation.');
     if (typeof request_id !== 'string' || !request_id.trim() || request_id.length > 128) throw new WebUIError('INVALID_REQUEST_ID', 'A nonempty request_id of at most 128 characters is required. Reuse it after a timeout.');
     if (typeof prompt !== 'string' || !prompt.trim()) throw new WebUIError('EMPTY_PROMPT', 'Prompt must not be blank.');
     if (!Array.isArray(files) || files.length > 10 || files.some((file) => typeof file !== 'string' || !path.isAbsolute(file))) throw new WebUIError('INVALID_FILES', 'Use at most ten absolute local file paths.');
@@ -97,7 +98,7 @@ export class TaskKernel {
     if (answer_tier !== undefined && (typeof answer_tier !== 'string' || !answer_tier.trim())) throw new WebUIError('INVALID_TIER', 'answer_tier must be an exact available tier.');
     if (typeof web_search !== 'boolean') throw new WebUIError('INVALID_SEARCH', 'web_search must be a boolean.');
     if ((answer_tier || web_search) && id !== 'chatgpt') throw new WebUIError('UNSUPPORTED_SETTING', 'answer_tier and web_search currently require ChatGPT.');
-    const payloadHash = fingerprint({ prompt, files, ...(model ? { model } : {}), ...(newConversation ? { newConversation: true } : {}), ...(session_id ? { session_id } : {}), ...(answer_tier ? { answer_tier } : {}), ...(web_search ? { web_search } : {}) });
+    const payloadHash = fingerprint({ prompt, files, ...(model ? { model } : {}), ...(newConversation ? { newConversation: true } : {}), ...(session_id ? { session_id } : {}), ...(answer_tier ? { answer_tier } : {}), ...(web_search ? { web_search } : {}), ...(existing_draft ? { existing_draft: true } : {}) });
     return this.locked(id, async (state, save) => {
       const existing = Object.values(state.tasks).find((task) => task.requestHash === requestHash);
       if (existing) {
@@ -126,7 +127,7 @@ export class TaskKernel {
             if (previous && !(state.sessionNavigations?.[session_id] >= previous.created_at)) await adapter.restore(previous.conversation_url);
           }
           if (model) await adapter.browser.selectModel(model);
-          task.baseline = await adapter.prepare();
+          task.baseline = await adapter.prepare({ prompt, files, existing_draft });
           const baselineURL = canonicalURL(task.baseline.url);
           if (!adapter.isRoot(baselineURL) && !adapter.isProvisional?.(baselineURL) && Object.values(state.tasks).some(other => other.task_id !== task.task_id && !terminal.has(other.state) && [other.conversation_url, other.baseline?.url].some(url => url && canonicalURL(url) === baselineURL))) {
             throw new WebUIError('CONVERSATION_ACTIVE', 'Another session has an active task in this conversation. Use a new conversation for independent work.');
@@ -135,8 +136,20 @@ export class TaskKernel {
           if (web_search) await adapter.browser.enableWebSearch();
           // Persist before the first possible send. A crash from this point on
           // must be reconciled from the page, never retried automatically.
-          task.state = 'submitting'; task.updated_at = Date.now(); await save();
-          const sent = await adapter.send({ prompt, files });
+          const beforeSubmit = async () => { task.state = 'submitting'; task.updated_at = Date.now(); await save(); };
+          if (!adapter.stagedSend) await beforeSubmit();
+          let sent;
+          try { sent = await adapter.send({ prompt, files, existing_draft, beforeSubmit }); }
+          catch (error) {
+            // Acknowledgement can render just after the browser timeout.
+            // Reconcile once, read-only, while still owning the session lock.
+            // Never infer delivery from a cleared composer or URL alone.
+            if (error.code !== 'SEND_UNCONFIRMED') throw error;
+            const observed = await adapter.inspect();
+            if (!adapter.isRoot(baselineURL) && !adapter.isProvisional?.(baselineURL) && canonicalURL(observed.url) !== baselineURL) throw error;
+            if (observed.userCount !== task.baseline.userCount + 1 || textHash(observed.lastUser) !== task.promptHash) throw error;
+            sent = { url: observed.url };
+          }
           task.state = 'submitted'; task.submitted_at = Date.now(); task.updated_at = task.submitted_at;
           const acknowledgement = adapter.restore ? await adapter.inspect() : null;
           const identityConfirmed = !acknowledgement || (acknowledgement.userCount === task.baseline.userCount + 1 && textHash(acknowledgement.lastUser) === task.promptHash);

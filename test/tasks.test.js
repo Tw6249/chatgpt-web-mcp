@@ -64,6 +64,46 @@ test('uncertain delivery reconciles without another send', async (t) => {
   assert.equal((await f.kernel.result(task.task_id)).state, 'completed'); assert.equal(f.sends(), 1);
 });
 
+test('staged send failures before the click boundary do not reserve an uncertain task', async t => {
+  const f = await fixture(t);
+  f.adapter.stagedSend = true;
+  f.adapter.send = async () => { throw new Error('upload wait timed out before clicking'); };
+  const task = await f.kernel.send(f.input);
+  assert.equal(task.state, 'failed'); assert.equal(task.blocking, false);
+  assert.equal((await f.kernel.list('gemini')).active_task, null);
+  assert.equal((await f.kernel.send(f.input)).replayed, true);
+  assert.equal(f.sends(), 0);
+});
+
+test('staged send keeps the reservation when click outcome is unknown', async t => {
+  const f = await fixture(t);
+  f.adapter.stagedSend = true;
+  f.adapter.send = async ({beforeSubmit}) => { await beforeSubmit(); throw new Error('connection lost at click'); };
+  const task = await f.kernel.send(f.input);
+  assert.equal(task.state, 'uncertain'); assert.equal(task.blocking, true);
+  assert.equal((await f.kernel.send(f.input)).replayed, true);
+});
+
+test('late exact user acknowledgement recovers send without clicking again', async t => {
+  const f = await fixture(t); const send = f.adapter.send;
+  f.adapter.send = async i => { await send(i); throw Object.assign(new Error('late rendering'), {code:'SEND_UNCONFIRMED'}); };
+  const task = await f.kernel.send(f.input);
+  assert.equal(task.state, 'submitted'); assert.equal(f.sends(), 1);
+  assert.equal((await f.kernel.send(f.input)).replayed, true); assert.equal(f.sends(), 1);
+});
+
+test('late acknowledgement with a different prompt remains uncertain', async t => {
+  const f = await fixture(t);
+  f.adapter.send = async () => { f.page.userCount++; f.page.lastUser='another message'; throw Object.assign(new Error('late'),{code:'SEND_UNCONFIRMED'}); };
+  assert.equal((await f.kernel.send(f.input)).state, 'uncertain');
+});
+
+test('late exact acknowledgement in a different existing conversation stays uncertain', async t => {
+  const f = await fixture(t); const send=f.adapter.send;
+  f.adapter.send=async i=>{await send(i);f.page.url+='/other';throw Object.assign(new Error('late'),{code:'SEND_UNCONFIRMED'});};
+  assert.equal((await f.kernel.send(f.input)).state,'uncertain');assert.equal(f.sends(),1);
+});
+
 test('retry replaces the completed response once, including concurrent calls and restart replay', async t => {
   const f = await fixture(t); const original = await f.kernel.send(f.input);
   Object.assign(f.page, { responseCount: 1, busy: false, complete: true, text: 'refusal' });

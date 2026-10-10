@@ -215,7 +215,7 @@ export class GeminiBrowser {
     return this.submitPrompt({ wait, timeoutMs });
   }
 
-  async submitPrompt({ wait = true, timeoutMs = this.config.responseTimeout } = {}) {
+  async submitPrompt({ wait = true, timeoutMs = this.config.responseTimeout, beforeSubmit } = {}) {
     const { snapshot: before } = await this.editable();
     if (!before.draft.trim()) throw new WebUIError("EMPTY_PROMPT", "Write a prompt before submitting.");
     await this.throttle("send");
@@ -224,6 +224,7 @@ export class GeminiBrowser {
     const send = await this.first(SELECTORS.send);
     if (!send || !await send.isEnabled()) throw new WebUIError("SEND_UNAVAILABLE", "Gemini send button is unavailable; wait for uploads to complete.");
     // Persist intent before clicking. Errors/cancellation must never cause a resend.
+    await beforeSubmit?.();
     await this.update({ pending: { originalURL: s.url, conversationURL: /\/app\/.+/.test(s.url) ? s.url : null, userCount: s.userCount, responseCount: s.responseCount, promptHash: hash(s.draft), startedAt: Date.now() }, lastSendAt: Date.now() });
     await send.click({ timeout: this.config.actionTimeout });
     return wait ? this.waitForResponse({ timeoutMs }) : { submitted: true, pending: true, url: (await this.page()).url() };
@@ -520,16 +521,27 @@ export class GeminiBrowser {
     return { uploaded: files.map((file) => path.basename(file)), sent: false };
   }
 
-  async waitForUploads(files) {
+  async waitForUploads(files, { exact = false } = {}) {
     const page = await this.page();
     const names = files.map((file) => ({ full: path.basename(file), stem: path.basename(file, path.extname(file)) }));
-    await page.waitForFunction(({ selector, names }) => {
+    await page.waitForFunction(({ selector, names, exact }) => {
       const previews = [...document.querySelectorAll(selector)].filter((e) => e.getClientRects().length && !e.closest('user-query, model-response'));
-      return names.every(({ full, stem }) => previews.some((e) => {
-        const text = e.querySelector('.gem-attachment-text')?.textContent.trim();
-        return text ? text === full || text === stem : e.innerText.trim().split('\n').some((line) => line.trim() === full);
-      })) && !previews.some((e) => e.querySelector('[role="progressbar"], [aria-busy="true"], mat-progress-spinner'));
-    }, { selector: SELECTORS.attachments, names }, { timeout: this.config.actionTimeout });
+      const labels = previews.map(e => {
+        // Long filenames are visually ellipsized. Gemini keeps the full name
+        // in the description referenced by this specific attachment chip.
+        const descriptions = [e, ...e.querySelectorAll('[aria-describedby]')]
+          .flatMap(el => (el.getAttribute('aria-describedby') || '').split(/\s+/))
+          .filter(Boolean).map(id => document.getElementById(id)?.textContent.trim()).filter(Boolean);
+        return [...descriptions, e.querySelector('.gem-attachment-text')?.textContent.trim(),
+          ...e.innerText.trim().split('\n').map(line => line.trim())].filter(Boolean);
+      });
+      const used = new Set();
+      return (!exact || previews.length === names.length) && names.every(({ full, stem }) => {
+        const index = labels.findIndex((values, i) => !used.has(i) && values.some(text => text === full || text === stem));
+        if (index < 0) return false;
+        used.add(index); return true;
+      }) && !previews.some((e) => e.querySelector('[role="progressbar"], [aria-busy="true"], mat-progress-spinner'));
+    }, { selector: SELECTORS.attachments, names, exact }, { timeout: this.config.actionTimeout });
   }
 
   async archiveConversation() {
