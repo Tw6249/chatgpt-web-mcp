@@ -58,10 +58,15 @@ export const SELECTORS = {
   ],
   attachmentButton: [
     "button[data-testid='composer-plus-btn']",
-    "button[aria-label*='Attach']",
-    "button[aria-label*='Upload']",
-    "button[aria-label*='添加']",
-    "button[aria-label*='上传']",
+    // Generic Add/Upload labels also match sidebar projects and avatar controls.
+    // Match attachment semantics so unrelated controls are never clicked.
+    "button[aria-label='添加文件等内容']",
+    "button[aria-label='添加照片和文件']",
+    "button[aria-label='上传文件']",
+    "button[aria-label='Attach files']",
+    "button[aria-label='Upload files']",
+    "button[aria-label='Add photos & files']",
+    "button[aria-label='Add files and more']",
   ],
   webSearchHints: [
     "[data-inline-selection-pill][data-id='search']",

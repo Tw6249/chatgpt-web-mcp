@@ -3203,6 +3203,7 @@ export class ChatGPTBrowser {
       // menu entries expose `data-fill` and `tabindex=0`; prefer those and
       // keep role/class fallbacks for older layouts.
       const selectors = [
+        "button[data-list-navigation-item='true']:has([data-menu-row-content])",
         "[data-fill][tabindex='0']",
         ".group.__menu-item[tabindex='0']",
         "[role='menuitem'], [role='menuitemradio'], [role='option']",
