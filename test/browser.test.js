@@ -457,14 +457,18 @@ test("redactDiagnosticPath removes conversation and opaque identifiers", () => {
   assert.equal(redactDiagnosticPath("/backend-api/models"), "/backend-api/models");
 });
 
-test("networkRateLimitScope identifies history list rate limits", () => {
+test("networkRateLimitScope distinguishes generation from background throttling", () => {
   assert.equal(networkRateLimitScope("/backend-api/conversations"), "history");
   assert.equal(networkRateLimitScope("/backend-api/conversations/"), "history");
   assert.equal(networkRateLimitScope("/backend-api/conversation/:id"), "generation");
-  assert.equal(networkRateLimitScope("/backend-api/models"), "http-429");
+  assert.equal(networkRateLimitScope("/backend-api/f/conversation", "POST"), "generation");
+  assert.equal(networkRateLimitScope("/backend-api/conversation/:id", "GET"), "history");
+  assert.equal(networkRateLimitScope("/backend-api/models", "GET"), "auxiliary");
+  assert.equal(networkRateLimitScope("/backend-api/wham/tasks/list", "GET"), "auxiliary");
+  assert.equal(networkRateLimitScope("/backend-api/conversation-metadata", "POST"), "auxiliary");
 });
 
-test("history HTTP 429 is diagnostic-only while generation HTTP 429 still stops", () => {
+test("background HTTP 429 is diagnostic-only while generation HTTP 429 still stops", () => {
   const browser = new ChatGPTBrowser();
   const handlers = new Map();
   const diagnostics = [];
@@ -477,21 +481,25 @@ test("history HTTP 429 is diagnostic-only while generation HTTP 429 still stops"
   browser.appendNetworkDiagnostic = async (entry) => diagnostics.push(entry);
   browser.tripCircuitBreaker = async (scope) => breakers.push(scope);
   browser.attachNetworkDiagnostics(page);
-  const respond = (pathname) => handlers.get("response")({
+  const respond = (pathname, method = "GET") => handlers.get("response")({
     status: () => 429,
     url: () => `https://chatgpt.com${pathname}`,
-    request: () => ({ method: () => "GET", resourceType: () => "fetch" }),
+    request: () => ({ method: () => method, resourceType: () => "fetch" }),
   });
 
   respond("/backend-api/conversations");
   respond("/backend-api/conversations/example-chat");
-  assert.equal(diagnostics.length, 2);
+  respond("/backend-api/wham/tasks/list");
+  respond("/backend-api/models");
+  respond("/backend-api/conversation/example-chat");
+  assert.equal(diagnostics.length, 5);
   assert.deepEqual(breakers, []);
   assert.deepEqual(notifications, []);
 
-  respond("/backend-api/conversation");
-  assert.deepEqual(breakers, ["generation"]);
-  assert.equal(notifications.length, 1);
+  respond("/backend-api/conversation", "POST");
+  respond("/backend-api/f/conversation", "POST");
+  assert.deepEqual(breakers, ["generation", "generation"]);
+  assert.equal(notifications.length, 2);
 });
 
 test("siteActionWaitMs enforces the 30 second send interval", () => {

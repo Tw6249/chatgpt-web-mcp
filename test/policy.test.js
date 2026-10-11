@@ -97,6 +97,13 @@ test('ChatGPT session context isolates production runtime writes while preservin
       await writeFile(RUNTIME_STATE_FILE, JSON.stringify({...await read(),circuitBreaker:{active:true}}));
       await assert.rejects(a.runExclusive(() => a.assertActionsAllowed()), /熔断/);
       await assert.rejects(fresh.runExclusive(() => fresh.assertActionsAllowed()), /熔断/);
+      const { chatgptProvider } = await import('./src/providers/adapters.js');
+      const provider = chatgptProvider(a);
+      a.getLatestResponse = async () => ({ response:'Completed answer', generating:false,
+        rateLimited:false, circuitBreaker:(await read()).circuitBreaker });
+      assert.equal((await provider.inspect()).complete, true);
+      assert.equal((await read()).circuitBreaker.active, true);
+      await assert.rejects(provider.prepare(), /熔断/);
     `, { CHATGPT_WEB_RUNTIME_STATE: path.join(directory, 'runtime.json'), CHATGPT_WEB_OPERATION_LOCK: path.join(directory, 'operation.lock') });
   } finally {
     if (path.dirname(directory) !== root) throw new Error('Unexpected test directory');

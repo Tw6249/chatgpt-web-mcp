@@ -6,7 +6,7 @@ export function recoveryFor(task) {
   const code = task.error?.code;
   if (code === 'SESSION_TAB_MISSING') return { action: 'inspect_session_tab', automatic_retry: false, message: 'The bound session tab is missing. Do not resend. Inspect the saved conversation manually; use another session only for independent new work.' };
   if (code === 'CONVERSATION_CHANGED') return { action: 'return_to_conversation', automatic_retry: false, message: 'Manually open the saved conversation in the dedicated browser, then call chat_result.' };
-  if (code === 'RATE_LIMITED') return { action: 'wait_for_manual_recovery', automatic_retry: false, message: 'Wait for the provider limit to clear. Confirm recovery before clearing its circuit breaker, then resume this task.' };
+  if (code === 'RATE_LIMITED') return { action: 'wait_for_manual_recovery', automatic_retry: false, message: 'Do not resend. Inspect the original page; a completed ChatGPT answer can be read with chat_result without clearing the breaker. New actions require confirmed recovery before clearing the circuit breaker.' };
   if (code === 'LOGIN_REQUIRED') return { action: 'manual_login', automatic_retry: false, message: 'Sign in manually in the dedicated browser, then resume this task. Never provide credentials to a tool.' };
   if (task.state === 'uncertain') return { action: 'inspect_page', automatic_retry: false, message: 'Inspect the original page, then call chat_result. Do not resend with a new request_id. Abandon tracking only after explicit user authorization.' };
   return { action: 'chat_result', automatic_retry: false, message: 'Resume observation with this task_id. A wait timeout does not cancel or resend the task.' };

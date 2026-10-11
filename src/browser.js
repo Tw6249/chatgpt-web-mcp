@@ -249,11 +249,14 @@ export function siteActionDelayMs(
   return Math.max(0, Number(intervalMs || 0) - elapsed);
 }
 
-export function networkRateLimitScope(pathname) {
+export function networkRateLimitScope(pathname, method = "POST") {
   const value = String(pathname || "");
   if (/^\/backend-api\/conversations(?:\/|$)/i.test(value)) return "history";
-  if (/^\/backend-api\/conversation(?:\/|$)/i.test(value)) return "generation";
-  return "http-429";
+  if (/^\/backend-api\/(?:f\/)?conversation(?:\/|$)/i.test(value)) {
+    if (String(method).toUpperCase() === "POST") return "generation";
+    if (String(method).toUpperCase() === "GET") return "history";
+  }
+  return "auxiliary";
 }
 
 const CONVERSATION_CHANGE_ACTIONS = new Set([
@@ -1294,10 +1297,10 @@ export class ChatGPTBrowser {
       };
       this.appendNetworkDiagnostic(entry).catch(() => {});
       if (status === 429) {
-        const scope = networkRateLimitScope(diagnosticPath);
-        // History failures are diagnostic-only; page-visible rate-limit
-        // warnings still stop operations through the existing text checks.
-        if (scope === "history") return;
+        const scope = networkRateLimitScope(diagnosticPath, entry.method);
+        // Background/history throttling is not evidence of a generation limit.
+        // Keep diagnostics without retrying the endpoint or blocking DOM reads.
+        if (scope !== "generation") return;
         this.tripCircuitBreaker(scope, `network-response:${diagnosticPath}`).catch(() => {});
         page
           .evaluate(

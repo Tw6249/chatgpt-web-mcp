@@ -94,7 +94,7 @@ An unofficial local MCP server that lets Codex and other MCP clients operate `ch
 - Discover models, reasoning levels, and answer tiers from the visible UI
 - Keep the dedicated browser and ChatGPT page open between MCP calls
 - Serialize browser control across MCP processes and apply conservative delays
-- Stop on rate-limit text or non-history HTTP 429; history API 429 does not trip the global breaker or automatically retry that endpoint
+- Gate new actions on rate-limit text or conversation-generation POST HTTP 429; background/history 429 is diagnostic-only, with no endpoint retry; completed answers remain readable
 - Use the default extreme tier with temporary Pro identity probes disabled by default, avoiding extra temporary chats and test messages
 - Rotate conversations before the 40-turn cap, loading older lazy history and archiving the complete transcript first; direct submit calls are rejected at the cap
 - Store only sanitized network error metadata
@@ -198,7 +198,7 @@ This is separate from the existing refresh before sending. Enabling both usually
 
 **Five seconds is a minimum interval, not an operation duration or a guarantee against rate limits or account restrictions.** Loading, UI interactions, generation, and other waits add to it; messages are not sent concurrently. Existing client environment overrides still win: an explicit `30000` remains 30 seconds after upgrading. Increase the three intervals to `30000` if needed; stop instead of repeatedly retrying when a warning appears.
 
-The five-minute breaker recovery and history quiet period are unchanged. The server does not automatically clear the breaker, dismiss warnings, retry HTTP 429, or close the persistent browser. History API 429 alone does not trip the global breaker: browser responses remain in the diagnostic log, and an unsuccessful direct history read uses the existing page-transcript fallback without retrying that endpoint. Explicit page-visible rate-limit warnings still stop operations. Missing observed API headers no longer cause another conversation page to open just for authentication priming.
+The five-minute breaker recovery and history quiet period are unchanged. The server does not automatically clear the breaker, dismiss warnings, retry HTTP 429, or close the persistent browser. ChatGPT conversation-generation POST HTTP 429 (including `/backend-api/f/conversation`) trips the global breaker. History reads, background task lists, model lists and other auxiliary 429 responses remain diagnostic-only; they do not establish generation quota exhaustion. An unsuccessful direct history read still uses the page-transcript fallback without retrying that endpoint. Explicit page-visible rate-limit warnings still gate new actions. `chat_result` can read a completed answer on the original page while a breaker remains active, including a legacy false positive; it still verifies the conversation and exact user turn. A rate-limit notice or still-streaming answer is not accepted as a completed response. Reading never clears the breaker. Missing observed API headers no longer cause another conversation page to open just for authentication priming.
 
 The PR's stale-owner cleanup is preserved: when the recorded MCP process has exited, a subsequent operation automatically clears its generation marker. This rule does not clear markers with a live or missing owner PID, clear a rate-limit breaker, or close the browser.
 

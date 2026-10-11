@@ -3,6 +3,7 @@ import { SELECTORS as geminiSelectors } from '../gemini/selectors.js';
 import { WebUIError } from '../shared/persistent-browser.js';
 import { CHROME_EXECUTABLE, BROWSER_STATE_FILE, RUNTIME_STATE_FILE, OPERATION_LOCK_FILE } from '../config.js';
 import { isResponseFailure } from '../gemini/browser.js';
+import { classifyRateLimitText } from '../browser.js';
 
 async function stop(browser, selectors) {
   const button = await browser.firstVisible?.(selectors, { timeout: 500 }) || await browser.first?.(selectors);
@@ -75,7 +76,10 @@ export function chatgptProvider(browser) {
     },
     async inspect() {
       const s = await browser.getLatestResponse({ includeTranscript: false });
-      if (s.rateLimited || s.circuitBreaker?.active) throw new WebUIError('RATE_LIMITED', 'ChatGPT rate limit is active. No retry was sent.');
+      // A persisted breaker gates actions, not observation. The task kernel still
+      // verifies the conversation and exact user turn before accepting this text.
+      const readableAnswer = !!s.response && !s.generating && !classifyRateLimitText(s.response).limited;
+      if (s.rateLimited && !readableAnswer) throw new WebUIError('RATE_LIMITED', 'ChatGPT displays a rate-limit warning without a completed answer. No retry was sent.');
       return { url: s.url, userCount: s.userMessageCount, responseCount: s.assistantMessageCount, lastUser: s.lastUserMessage || '', text: s.response || '', busy: s.generating, complete: !!s.response && !s.generating, model: s.model };
     },
     settle: () => browser.settleManagedGeneration(),

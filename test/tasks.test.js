@@ -56,6 +56,28 @@ for (const id of ['chatgpt', 'gemini']) {
   });
 }
 
+test('ChatGPT recovers an answer after a rate-limit error without clearing its breaker or resending', async t => {
+  const f = await fixture(t, 'chatgpt');
+  const task = await f.kernel.send(f.input);
+  const breaker = { active: true, scope: 'http-429', source: 'network-response:/backend-api/wham/tasks/list' };
+  const state = { url: f.page.url, userMessageCount: 1, assistantMessageCount: 1,
+    lastUserMessage: f.input.prompt, response: '', generating: false,
+    rateLimited: true, circuitBreaker: breaker };
+  f.adapter.inspect = chatgptProvider({ getLatestResponse: async () => state }).inspect;
+  assert.equal((await f.kernel.result(task.task_id)).error.code, 'RATE_LIMITED');
+  state.response = 'Recovered completed answer';
+  state.rateLimited = false;
+  state.lastUserMessage = 'another prompt';
+  assert.equal((await f.kernel.result(task.task_id)).error.code, 'SEND_UNCONFIRMED');
+  state.lastUserMessage = f.input.prompt;
+  const recovered = await f.kernel.result(task.task_id);
+  assert.equal(recovered.state, 'completed');
+  assert.equal(recovered.task_id, task.task_id);
+  assert.equal(recovered.response.text, state.response);
+  assert.equal(f.sends(), 1);
+  assert.equal(breaker.active, true);
+});
+
 test('uncertain delivery reconciles without another send', async (t) => {
   const f = await fixture(t); const send = f.adapter.send;
   f.adapter.send = async (i) => { await send(i); throw new Error('connection lost after click'); };
