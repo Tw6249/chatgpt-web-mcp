@@ -16,7 +16,7 @@ description: "通过本机 web-chat MCP 的专用浏览器咨询 ChatGPT 或 Gem
 
 ## 平台与任务范围
 
-- 用户指定 ChatGPT、Gemini、模型或已有网页会话时遵从指定。未指定平台时默认 ChatGPT，并在发送前的简短进度说明中告知；本次任务已有明确平台则沿用。
+- 用户指定 ChatGPT、Gemini、模型或已有网页会话时遵从指定。未指定平台时默认 Gemini，专家设置为 **4 Argon + High**，并在发送前的简短进度说明中告知；本次任务已有明确平台则沿用。
 - 调用本 Skill 并要求咨询，意味着可以把本任务所需的问题、用户提供的背景、相关资料及明确授权范围内的文件送给选定网页专家。已有授权不重复询问。自动发现 Skill 本身不授权外发普通任务数据；仅要求安装、配置或解释 Skill 时，不发送实际咨询。
 - 文件授权包括用户点名、为此咨询附加的文件，或用户明确要求共享的项目/目录范围内的相关文件。可读取不等于已获上传授权。超出范围时先列出具体文件及用途再询问，不上传整个工作区。摘录和摘要遵守同一分享范围。
 - 只发送本次咨询需要的内容。不发送系统/开发者指令、凭证、浏览器配置、Cookie、其他聊天记录或无关个人资料。
@@ -51,7 +51,7 @@ description: "通过本机 web-chat MCP 的专用浏览器咨询 ChatGPT 或 Gem
 2. 用 `chat_status({provider})` 核实网页和托管任务状态。需要登录/验证码时让用户在专用浏览器中完成，再继续；不索取密码或 Cookie。
 3. 独立咨询用 `chat_new({provider})` 新建会话；追问继续本任务原会话。已有草稿、附件、正在运行的任务或页面身份不符时先检查，不清空或覆盖用户内容，不修改其他任务占用的页面。
 4. 区分 **ChatGPT 回答档位**与**具体模型名称**：用户仅要求“Pro／Pro 档位”时，在下节的 `chat_send` 中传 `answer_tier:"Pro"` 并省略 `model`；MCP 会在上传材料和发送前选择、核验档位，失败则停止。不要为此先调用 `chat_models` 或 `chat_select_model(model:"Pro")`，它们走另一套模型菜单路径。用户指定具体模型名称时才先 `chat_models({provider})`，再按实际返回名称调用 `chat_select_model({provider, model})`。读模型列表报“没有找到‘高级’入口”表示菜单识别失败，不证明 Pro 不可用；不要猜模型名称继续选择。具体模型要求未核验时停止并报告，不能用 Pro 档位代替指定模型。ChatGPT 未要求时保留当前设置，不自动选 Pro。遵守 MCP 当前平台规则，不调用 Pro 身份探针。
-5. 本仓库的 Gemini 默认偏好是 **3.8 Flash + Extended thinking**；用户明确指定其他设置时优先遵从。先核实模型列表确有 `3.8 Flash`，再调用 `chat_select_model({provider:"gemini", session_id:"本次会话", model:"3.8 Flash", extended_thinking:true})`。确认 `selectionVerified:true`、`extendedThinking:true` 和 `thinkingVerified:true` 后才发送。Extended thinking 是独立开关，不是模型名称。随后 `chat_send` 沿用该会话并省略 `model`，避免重复选择重置设置。旧版工具若不支持 `extended_thinking`，先重连更新后的 MCP；模型或开关不可用时明确报告，不静默降级，不把未验证的设置称为已启用。
+5. 本仓库的 Gemini 默认专家是 **4 Argon + High**；用户明确指定其他设置时优先遵从。先核实模型列表确有 `4 Argon`，再调用 `chat_select_model({provider:"gemini", session_id:"本次会话", model:"4 Argon", extended_thinking:true})`。确认 `selectionVerified:true`、`extendedThinking:true`、`thinkingVerified:true` 和 `thinkingLevel:"High"` 后才发送。High 是独立思考档位，不是模型名称；MCP 0.7.10+ 会展开新版 Thinking level 子菜单并重新读取选中状态。随后 `chat_send` 沿用该会话并省略 `model`，避免重复选择重置设置。旧版 MCP 需升级并重连；模型或 High 不可用、无法核验时明确报告，不静默降级。用户选择旧模型时，`extended_thinking:true` 仍兼容旧版 Extended thinking 开关，但不能把旧开关称为已核验 High。
 
 ## 提交一次，等待完整结果
 
@@ -91,7 +91,7 @@ description: "通过本机 web-chat MCP 的专用浏览器咨询 ChatGPT 或 Gem
 这是本 Skill 已配置的默认恢复行为：对已获授权的 Gemini 咨询，网页完成回复后若明确拒答且没有实质回答，自动点击原回答的重试按钮一次，无需再次询问用户。用户要求不重试时遵从。本配置不授权外发普通本地任务。
 
 1. 按整段回答的语义识别拒答，例如对正常问题仅回复“我只是一个语言模型，无法提供这方面的帮助”或“由于程序代码的局限，我没法办到”。不要因正常答案引用了拒答文字、表达不确定性或只说明某项局限就触发。
-2. 确认任务为 `completed`、`retry_count` 尚未达到 1，且当前平台为 Gemini。调用 MCP 0.7.5+ 的 `chat_retry({task_id:"原任务编号"})`。它核验原会话、问题、答案、模型和空输入框，在原回答点击 Redo／重试；不新建会话、不重新发送提示词、不重复上传附件，不更改 3.8 Flash + Extended thinking 或用户指定的其他设置。
+2. 确认任务为 `completed`、`retry_count` 尚未达到 1，且当前平台为 Gemini。调用 MCP 0.7.5+ 的 `chat_retry({task_id:"原任务编号"})`。它核验原会话、问题、答案、模型和空输入框，在原回答点击 Redo／重试；不新建会话、不重新发送提示词、不重复上传附件，不更改 4 Argon + High 或用户指定的其他设置。
 3. 使用返回的同一个 `task_id` 持续调用 `chat_result({task_id,wait:true,timeoutMs:30000})`，等待新的完整回答。`previous_response` 是原拒答，不能把它当成重试结果。连接中断时恢复原任务；再次调用 `chat_retry` 只读取已记录的这一次尝试，不会再次点击。
 4. 重试后正常回答则继续原任务；再次拒答时停止，说明“已点击重试一次，仍拒答”，保留真实回答及会话链接。不要循环点击、改写问题规避拒绝，或自动切换模型／关闭 Extended thinking。
 

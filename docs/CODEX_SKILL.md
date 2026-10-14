@@ -10,7 +10,7 @@ skills/web-chat/agents/openai.yaml Skill 名称、提示词与 MCP 依赖
 
 Skill 不包含浏览器登录信息、任务日志或个人聊天内容。安装 Skill 不会自动注册 MCP，也不会自动向网页发送资料。
 
-Gemini 的默认偏好为 **3.8 Flash + 最高思考强度**，用户指定其他设置时覆盖此偏好。`chat_select_model` 的 Gemini 参数 `extended_thinking:true` 在新版 Low/Medium/High 菜单中选择并核验 High，在旧版菜单中开启并核验 Extended thinking；false 对应 Low 或关闭旧开关。返回的 `thinkingLevel` 记录实际核验的档位。模型不可用、指定档位缺失或无法确认时停止提交，不自动降级。升级后重新连接 MCP，才能加载新实现。
+Skill 的默认专家为 **Gemini 4 Argon + High**，用户指定其他平台或设置时覆盖此偏好。先核实 `chat_models` 返回 `4 Argon`，再调用 `chat_select_model({provider:"gemini",session_id:"本次会话",model:"4 Argon",extended_thinking:true})`。MCP 0.7.10+ 会展开新版 Thinking level 子菜单并重新核验选择；默认专家要求返回 `selectionVerified:true`、`extendedThinking:true`、`thinkingVerified:true` 和 `thinkingLevel:"High"`。旧模型仍兼容平铺 Low/Medium/High 菜单及 Extended thinking 开关；false 对应 Low 或关闭旧开关。模型不可用、指定档位缺失或无法确认时停止提交，不自动降级。默认值由 Skill 执行，MCP 不改写调用方的显式 provider/model。升级后重新连接 MCP，并更新已安装 Skill，才能加载新实现和默认偏好。
 
 MCP 0.7.5+ 还提供 `chat_retry({task_id})`：Skill 判断 Gemini 的完整回答是拒答时，在原回答上点击一次 Redo／重试，再以原任务编号等待新回答。每个任务最多一次，重连或重复调用不会重复点击；原回复保存在 `previous_response`。再次拒答时报告结果，不循环重试或新发同一问题。该接口当前不支持 ChatGPT，也不重试状态不明、限流或仍在运行的任务。
 
@@ -111,7 +111,7 @@ cp -R ./skills/web-chat/. "$skills_dir/web-chat/"
 使用 $web-chat，请 Gemini 审阅我为本次咨询提供的文件，取得完整意见后改进方案。
 ```
 
-The skill defaults to ChatGPT unless the user selects Gemini or has already chosen a provider for the task. It collects relevant context and authorized attachments, submits once with a stable request ID, waits with `chat_result`, and uses the complete expert answer to continue the original task. A timeout resumes the existing task instead of sending again. File access alone is not upload authorization, and the skill never silently switches providers.
+The skill defaults to Gemini 4 Argon + High unless the user selects another provider/model or has already chosen one for the task. It verifies both the model and High before sending, collects relevant context and authorized attachments, submits once with a stable request ID, waits with `chat_result`, and uses the complete expert answer to continue the original task. A timeout resumes the existing task instead of sending again. File access alone is not upload authorization, and the skill never silently switches providers.
 
 本仓库版本支持 `session_id`，不同任务可隔离标签页；旧版 MCP 则使用原会话接口。Skill 按运行时工具声明选择参数。网页登录、验证码、限流、不可读取的附件或不确定发送状态仍可能需要用户处理，Skill 不会冒称已成功完成。
 

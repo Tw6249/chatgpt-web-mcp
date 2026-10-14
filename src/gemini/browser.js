@@ -139,7 +139,7 @@ export class GeminiBrowser {
         completeControl: !!latest && [...latest.querySelectorAll(s.complete)].some(visible),
         alerts: [...document.querySelectorAll(s.alerts)].filter(visible).map((e) => e.innerText).join("\n"),
         attachments: [...document.querySelectorAll(s.attachments)].filter((e) => visible(e) && !e.closest('user-query, model-response') && !e.parentElement?.closest(s.attachments)).map((e) => e.innerText),
-        model: first(s.model)?.innerText?.trim() || null,
+        model: first(s.model)?.innerText?.replace(/\s+/g, ' ').trim() || null,
       };
     }, SELECTORS);
     return data;
@@ -405,6 +405,21 @@ export class GeminiBrowser {
       await this.editable(); await this.throttle('change');
       const menu = await this.openModelMenu();
       try {
+        // Argon's thinking levels are nested in a collapsed settings row.
+        // Reopen it on every verification pass: closing the picker can reset it.
+        const expander = menu.locator(`${SELECTORS.thinkingExpander}:visible`);
+        const count = await expander.count();
+        if (count > 1) throw new WebUIError('THINKING_AMBIGUOUS', 'Multiple thinking-level controls are visible; nothing was selected.');
+        if (count === 1) {
+          if (!await expander.isEnabled()) throw new WebUIError('THINKING_UNAVAILABLE', 'Gemini thinking-level settings are disabled.');
+          if (await expander.getAttribute('aria-expanded') !== 'true') await expander.click();
+          try {
+            await expander.locator(`${SELECTORS.models}`).first().waitFor({ state: 'visible', timeout: this.config.actionTimeout });
+          } catch (error) {
+            if (error.name !== 'TimeoutError') throw error;
+            throw new WebUIError('THINKING_NOT_CONFIRMED', 'Gemini thinking-level settings did not expand; nothing was sent.');
+          }
+        }
         // Newer menus replace the binary switch with Low / Medium / High
         // settings rows. Keep the boolean API: true requests High, false Low.
         // Only inspect settings inside this menu, never model names or page text.

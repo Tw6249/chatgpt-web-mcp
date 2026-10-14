@@ -288,10 +288,93 @@ test('thinking levels select and reverify High, remain idempotent, and map false
   assert.equal(await page.evaluate(() => sendCount), 0);
 });
 
-for (const failure of ['missing', 'disabled', 'ineffective', 'duplicate', 'multiple-selected']) {
-  test('thinking levels fail closed when High is ' + failure, async t => {
+async function nestedThinkingMenu(page) {
+  await levelThinkingMenu(page);
+  await page.evaluate(() => {
+    const menu = document.querySelector('#models');
+    const expander = document.createElement('div');
+    expander.setAttribute('role', 'menuitem');
+    expander.setAttribute('value', 'thinking_level');
+    expander.setAttribute('aria-expanded', 'false');
+    expander.innerHTML = '<span class="label">Thinking level</span><div class="expand-content" hidden></div>';
+    const content = expander.querySelector('.expand-content');
+    for (const row of menu.querySelectorAll('[data-thinking-fixture]')) {
+      content.append(row);
+      row.addEventListener('click', e => e.stopPropagation());
+    }
+    window.expandClicks = 0;
+    expander.onclick = () => {
+      window.expandClicks++;
+      setTimeout(() => { expander.setAttribute('aria-expanded', 'true'); content.hidden = false; }, 80);
+    };
+    menu.append(expander);
+    // The real picker can collapse its settings whenever it closes.
+    new MutationObserver(() => {
+      if (menu.hidden) { content.hidden = true; expander.setAttribute('aria-expanded', 'false'); }
+    }).observe(menu, { attributes: true, attributeFilter: ['hidden'] });
+    const model = menu.querySelector('[data-mode-id]');
+    model.querySelector('.label').textContent = '4 Argon';
+    model.onclick = () => {
+      model.classList.add('selected');
+      document.querySelector('[aria-label="Open mode picker"]').textContent = 'Gemini\nArgon';
+      menu.hidden = true;
+    };
+  });
+}
+
+test('Argon expands delayed nested thinking levels and reopens to verify High', async t => {
+  const { b, page } = await fixture(t);
+  await nestedThinkingMenu(page);
+  const result = await b.selectModel('4 Argon', { extended_thinking: true });
+  assert.equal(result.selectedModel, '4 Argon');
+  assert.equal(result.model, 'Gemini Argon');
+  assert.equal(result.selectionVerified, true);
+  assert.equal(result.thinkingLevel, 'High');
+  assert.equal(result.thinkingVerified, true);
+  assert.equal(result.extendedThinking, true);
+  assert.equal(await page.evaluate(() => expandClicks), 2);
+  assert.equal((await b.setExtendedThinking(true)).thinkingLevel, 'High');
+  assert.equal(await page.evaluate(() => levelClicks), 1);
+  assert.equal((await b.setExtendedThinking(false)).thinkingLevel, 'Low');
+  assert.equal(await page.evaluate(() => levelClicks), 2);
+  assert.deepEqual((await b.listModels()).models.map(m => m.name), ['4 Argon']);
+  assert.equal(await page.evaluate(() => sendCount), 0);
+});
+
+test('already expanded thinking settings are not toggled closed', async t => {
+  const { b, page } = await fixture(t);
+  await nestedThinkingMenu(page);
+  await b.openModelMenu();
+  await page.locator('[value="thinking_level"]').evaluate(e => {
+    e.setAttribute('aria-expanded', 'true'); e.querySelector('.expand-content').hidden = false;
+    e.onclick = () => { throw Error('Should not toggle an expanded section'); };
+  });
+  assert.equal((await b.setExtendedThinking(false)).thinkingLevel, 'Low');
+});
+
+for (const failure of ['disabled', 'duplicate', 'ineffective']) {
+  test('thinking expander fails closed when ' + failure, async t => {
     const { b, page } = await fixture(t);
-    await levelThinkingMenu(page);
+    await nestedThinkingMenu(page);
+    b.config.actionTimeout = 250;
+    await page.locator('[value="thinking_level"]').evaluate((e, failure) => {
+      if (failure === 'disabled') e.setAttribute('aria-disabled', 'true');
+      if (failure === 'duplicate') e.after(e.cloneNode(true));
+      if (failure === 'ineffective') e.onclick = () => {};
+    }, failure);
+    const code = { disabled: 'THINKING_UNAVAILABLE', duplicate: 'THINKING_AMBIGUOUS', ineffective: 'THINKING_NOT_CONFIRMED' }[failure];
+    await assert.rejects(b.setExtendedThinking(true), { code });
+    assert.equal(await page.evaluate(() => levelClicks), 0);
+    assert.equal(await page.evaluate(() => sendCount), 0);
+    assert.equal(await page.locator('#models').isVisible(), false);
+  });
+}
+
+for (const nested of [false, true]) {
+for (const failure of ['missing', 'disabled', 'ineffective', 'duplicate', 'multiple-selected']) {
+  test(`${nested ? 'nested' : 'flat'} thinking levels fail closed when High is ${failure}`, async t => {
+    const { b, page } = await fixture(t);
+    await (nested ? nestedThinkingMenu : levelThinkingMenu)(page);
     await page.locator('[data-thinking-fixture="High"]').evaluate((e, failure) => {
       if (failure === 'missing') e.remove();
       if (failure === 'disabled') e.setAttribute('aria-disabled', 'true');
@@ -304,6 +387,7 @@ for (const failure of ['missing', 'disabled', 'ineffective', 'duplicate', 'multi
     assert.equal(await page.evaluate(() => sendCount), 0);
     assert.equal(await page.locator('[data-thinking-fixture="Low"]').getAttribute('class'), 'selected');
   });
+}
 }
 
 async function staleEscapeMenu(page) {

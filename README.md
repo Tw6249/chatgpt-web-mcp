@@ -4,6 +4,12 @@
 
 [English](README.en.md)
 
+## Gemini Argon 网页适配（0.7.10）
+
+- 支持新版可折叠的 Thinking level 子菜单，等待选项展开后选择并重新核验 High；保留旧版平铺档位和 Extended thinking 开关支持。
+- 网页专家 Skill 默认使用 Gemini **4 Argon + High**。显式平台和模型选择优先；模型或 High 无法核验时停止，不自动降级。此默认值由 Skill 执行，底层 MCP 仍要求显式 provider，发送时保留已选择的设置。
+- 升级 MCP 后重连，并同步复制 `skills/web-chat`，让已安装 Skill 使用新默认值。
+
 ## 网页兼容修复（0.7.2）
 
 - ChatGPT 识别新版“发送”按钮，只有确认新增消息与提示词一致后才报告发送成功；找不到按钮时保留草稿，不使用 Enter 猜测发送。
@@ -12,7 +18,7 @@
 
 ## MCP + 网页专家 Skill
 
-本仓库同时维护 MCP 服务（`src/`）和 [web-chat 网页专家 Skill](skills/web-chat/SKILL.md)。Skill 负责整理当前 Agent 任务的问题、背景和已授权文件，调用 ChatGPT 或 Gemini 网页端，等待完整回复，再将专家意见用于后续工作。默认使用 ChatGPT，可明确指定 Gemini。
+本仓库同时维护 MCP 服务（`src/`）和 [web-chat 网页专家 Skill](skills/web-chat/SKILL.md)。Skill 负责整理当前 Agent 任务的问题、背景和已授权文件，调用 ChatGPT 或 Gemini 网页端，等待完整回复，再将专家意见用于后续工作。默认使用 Gemini 4 Argon + High，可明确指定其他平台或模型。
 
 常规咨询由 MCP 自动启动或复用独立配置目录的专用浏览器，不接管日常 Chrome。独立任务通过 `session_id` 使用各自的标签页；工具缺失或连接失败时报告问题，不自动转用电脑操作或通用浏览器工具。
 

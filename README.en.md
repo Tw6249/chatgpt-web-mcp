@@ -6,7 +6,9 @@ ChatGPT now recognizes the current Send button and verifies the appended prompt 
 
 ## MCP + web expert skill
 
-This repository includes both the MCP server (`src/`) and the [web-chat expert skill](skills/web-chat/SKILL.md). The skill prepares the current agent task's questions, context and authorized files, consults ChatGPT or Gemini in the browser, waits for the full answer, and brings it back to continue the original task. ChatGPT is the default; Gemini can be requested explicitly.
+This repository includes both the MCP server (`src/`) and the [web-chat expert skill](skills/web-chat/SKILL.md). The skill prepares the current agent task's questions, context and authorized files, consults ChatGPT or Gemini in the browser, waits for the full answer, and brings it back to continue the original task. The default expert is Gemini **4 Argon + High**; explicit provider/model requests take precedence.
+
+Version 0.7.10 expands Gemini's nested Thinking level menu before selecting and verifying High, while retaining flat-menu and legacy Extended thinking support. Missing or unverified settings stop submission without downgrading. This default belongs to the skill: MCP callers still specify a provider and retain their chosen settings on send. Reconnect MCP after upgrading and copy the updated `skills/web-chat` directory to update an installed skill.
 
 See the [Codex installation and usage guide](docs/CODEX_SKILL.md) to register the `web-chat` MCP and install the skill. If the MCP is already configured, install only the skill. Example: `Use $web-chat to ask Gemini to review this plan, then use its complete response to improve the plan.`
 
