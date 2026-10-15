@@ -6,6 +6,8 @@ import path from 'node:path';
 import { TaskKernel } from '../src/core/tasks.js';
 import { readState, writeState } from '../src/shared/persistent-browser.js';
 import { chatgptProvider } from '../src/providers/adapters.js';
+import { acquireLock } from '../src/shared/persistent-browser.js';
+import { controlRequest } from '../src/shared/control.js';
 
 async function fixture(t, id = 'gemini') {
   const root = path.resolve(os.tmpdir());
@@ -24,6 +26,37 @@ async function fixture(t, id = 'gemini') {
   const input = { provider: id, request_id: 'one', prompt: 'synthetic private prompt' };
   return { kernel, adapter, page, input, directory, journal: path.join(directory, id, 'tasks.json'), sends: () => sends, cancels: () => cancels };
 }
+
+test('result timeout covers a busy journal without stealing its lock or resending', async t => {
+  const f = await fixture(t); const task = await f.kernel.send(f.input);
+  const release = await acquireLock(f.journal + '.lock');
+  f.adapter.inspect = () => assert.fail('a busy journal must not enter the browser');
+  const started = Date.now();
+  try {
+    const result = await f.kernel.result(task.task_id, { wait: true, timeoutMs: 1000 });
+    assert.equal(result.task_id, task.task_id); assert.equal(result.timed_out, true);
+    assert.ok(Date.now() - started < 4000);
+    assert.equal((await readState(f.journal + '.lock')).pid, process.pid);
+    assert.equal(f.sends(), 1);
+  } finally { await release(); }
+});
+
+test('a stalled result read unwinds before releasing its journal and recovers without replay', async t => {
+  const f = await fixture(t); const task = await f.kernel.send(f.input);
+  let signal, late, settles = 0;
+  f.adapter.browser.runExclusive = async (fn, options) => { signal = options.signal; return fn(); };
+  f.adapter.inspect = () => controlRequest(new Promise(resolve => { late = resolve; }), { signal, timeout: 10000 });
+  f.adapter.settle = async () => { settles++; };
+  const result = await f.kernel.result(task.task_id, { wait: true, timeoutMs: 1000 });
+  assert.equal(result.timed_out, true); assert.equal(result.state, 'uncertain');
+  late({ ...f.page, busy: false, complete: true, responseCount: 1, text: 'late answer' });
+  await new Promise(setImmediate);
+  assert.equal(settles, 0); assert.equal(f.sends(), 1);
+  assert.deepEqual(await readState(f.journal + '.lock'), {});
+  f.adapter.inspect = async () => ({ ...f.page, busy: false, complete: true, responseCount: 1, text: 'verified answer' });
+  assert.equal((await f.kernel.result(task.task_id)).state, 'completed');
+  assert.equal(f.sends(), 1);
+});
 
 for (const id of ['chatgpt', 'gemini']) {
   test(`${id}: replay survives restart, rejects content conflicts and stores no prompt text`, async (t) => {

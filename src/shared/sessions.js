@@ -1,4 +1,5 @@
 import { WebUIError } from './persistent-browser.js';
+import { controlRequest } from './control.js';
 
 export function validateSessionId(id) {
   if (id !== undefined && (typeof id !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/.test(id) || ['__proto__', 'constructor', 'prototype'].includes(id))) {
@@ -29,17 +30,27 @@ export function mergeSessionView(raw, next, id, fields) {
   return result;
 }
 
-export async function targetId(context, page) {
-  const cdp = await context.newCDPSession(page);
-  try { return (await cdp.send('Target.getTargetInfo')).targetInfo.targetId; }
-  finally { await cdp.detach(); }
+export async function targetId(context, page, { signal, timeout = 20000 } = {}) {
+  let accepted = true;
+  const attaching = context.newCDPSession(page);
+  void attaching.then(cdp => { if (!accepted) void cdp.detach().catch(() => {}); }, () => {});
+  let cdp;
+  try {
+    cdp = await controlRequest(attaching, { signal, timeout });
+    return (await controlRequest(cdp.send('Target.getTargetInfo'), { signal, timeout })).targetInfo.targetId;
+  } finally {
+    accepted = false;
+    if (cdp) await controlRequest(cdp.detach(), { timeout: 1000 }).catch(() => {});
+  }
 }
 
 // CDP target IDs survive reconnects and URL changes. Never guess by active
 // tab, title or conversation URL, and never recreate a missing managed tab.
-export async function sessionPage(context, { sessionId, bindings = {}, url, persist, beforeCreate = async () => {} }) {
+export async function sessionPage(context, { sessionId, bindings = {}, url, persist, beforeCreate = async () => {}, signal, timeout }) {
   validateSessionId(sessionId);
-  const pages = await Promise.all(context.pages().map(async page => ({ page, id: await targetId(context, page) })));
+  signal?.throwIfAborted();
+  const pages = await Promise.all(context.pages().map(async page => ({ page, id: await targetId(context, page, { signal, timeout }) })));
+  signal?.throwIfAborted();
   const bound = sessionId && Object.hasOwn(bindings, sessionId) ? bindings[sessionId] : null;
   if (bound) {
     const match = pages.find(p => p.id === bound);
@@ -55,8 +66,10 @@ export async function sessionPage(context, { sessionId, bindings = {}, url, pers
     if (candidates.length === 1) return candidates[0].page;
   }
   await beforeCreate();
+  signal?.throwIfAborted();
   const page = await context.newPage();
-  if (sessionId) await persist({ ...bindings, [sessionId]: await targetId(context, page) });
+  signal?.throwIfAborted();
+  if (sessionId) await persist({ ...bindings, [sessionId]: await targetId(context, page, { signal, timeout }) });
   await page.goto(url, { waitUntil: 'domcontentloaded' });
   return page;
 }

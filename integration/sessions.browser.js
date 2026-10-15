@@ -5,9 +5,42 @@ import { chromium } from 'playwright-core';
 import { geminiConfig } from '../src/gemini/config.js';
 import { sessionPage, targetId } from '../src/shared/sessions.js';
 import { ChatGPTBrowser } from '../src/browser.js';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { PersistentBrowser, readState, processAlive } from '../src/shared/persistent-browser.js';
+import { controlRequest } from '../src/shared/control.js';
 let chrome;
 before(async () => { chrome = await chromium.launch({ executablePath: geminiConfig().executable || chromium.executablePath(), headless: true }); });
 after(async () => { await chrome?.close(); });
+
+test('controller timeout and disconnect preserve the dedicated browser, tab and draft', async t => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'persistent-browser-fixture-'));
+  const runtime = new PersistentBrowser({
+    profile: path.join(directory, 'profile'), browserState: path.join(directory, 'browser-state.json'),
+    executable: geminiConfig().executable || chromium.executablePath(), url: 'about:blank', headless: true, actionTimeout: 10000,
+    // Match Playwright's isolated fixture launch on Linux CI runners.
+    launchArgs: process.platform === 'linux' ? ['--no-sandbox'] : [],
+  });
+  t.after(async () => {
+    await runtime.terminate();
+    await fs.rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  });
+  const context = await runtime.connect();
+  const page = context.pages()[0];
+  await page.setContent('<textarea>preserved draft</textarea>');
+  const id = await targetId(context, page);
+  const state = await readState(runtime.config.browserState);
+  await assert.rejects(controlRequest(page.evaluate(() => new Promise(() => {})), {
+    timeout: 100, onInterrupt: () => runtime.disconnect(),
+  }), { code: 'CONTROL_TIMEOUT' });
+  await runtime.disconnect();
+  assert.equal(processAlive(state.pid), true);
+  const recovered = await runtime.connect();
+  assert.equal(recovered.pages().length, 1);
+  assert.equal(await targetId(recovered, recovered.pages()[0]), id);
+  assert.equal(await recovered.pages()[0].locator('textarea').inputValue(), 'preserved draft');
+});
 async function fixture(t) {
   const context = await chrome.newContext();
   await context.route('**/*', route => route.fulfill({ body: '<html><body><textarea></textarea></body></html>', contentType: 'text/html' }));

@@ -1,5 +1,14 @@
 # ChatGPT & Gemini Web MCP
 
+## Browser stability fixes (0.7.11)
+
+Both providers now use bounded loopback probes, CDP attachment and controller cleanup. A timeout preserves the dedicated browser, draft and pending task. A live but unreachable browser never triggers a duplicate launch against its profile. `chat_result.timeoutMs` also covers journal-lock contention and observation, with up to approximately five additional seconds for controller cleanup. Continue reading the same task after a timeout; nothing is automatically resent. Persistent `CONTROL_BUSY` means cleanup is unconfirmed: reconnect MCP and read the original task.
+
+ChatGPT tier detection waits for hydration and verifies English/Chinese labels near the composer instead of choosing a global pill by CSS class. Lifecycle metadata is recorded in `browser-diagnostics.jsonl` beside each provider's `browser-state.json`, rotating after 512 KiB into one `.1` file. It contains connection timing, controller disconnects, page crashes and managed process exits, never URLs, conversation identifiers, page content or raw errors. An expected controller disconnect is normal and does not mean Chrome exited; a process exit alone does not prove a native crash.
+
+With unfinished tasks, upgrade using `node src/cli.js upgrade --preserve-tasks`, then reconnect MCP. Journals and signed-in profiles are retained. Offline browser regressions verify the fixes; the reported historical window disappearance has not been reproduced or attributed to a native crash.
+
+
 ## Browser compatibility fixes (0.7.2)
 
 ChatGPT now recognizes the current Send button and verifies the appended prompt before reporting success, without an Enter fallback. Gemini surfaces its additional service-error message as `PAGE_ERROR`. To repair an older installation that cannot read newer task journals, run `node src/cli.js upgrade --preserve-tasks` from a current checkout; the candidate must validate existing journals before activation. See [upgrade compatibility](docs/COMPARISONS_AND_INSTALL.md#upgrade-and-rollback).

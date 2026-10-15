@@ -48,3 +48,26 @@ test('web search recognizes current menu rows and ignores old answer text', asyn
   assert.equal(await page.evaluate(()=>window.wrong),undefined);
   assert.equal((await reader.enableWebSearch()).changed,false);
 });
+
+for (const label of ['Pro', '极高', 'High', 'Thinking effort: High']) {
+  test('answer tier uses semantic composer control without a main region: ' + label, async t => {
+    const { page } = await fixture(t, '');
+    await page.setContent(`<aside><button class="__composer-pill">Pro</button></aside><form><textarea id="composer"></textarea><button id="tier" aria-label="${label}">${label.startsWith('Thinking') ? '⚙' : label}</button><button class="__composer-pill">Search</button></form>`);
+    const reader = new ChatGPTBrowser();
+    reader.page = async () => page; reader.composer = async () => page.locator('#composer');
+    const target = await reader.advancedControlButton();
+    assert.equal(await target.getAttribute('id'), 'tier');
+  });
+}
+
+test('answer tier waits for hydration and never selects an unrelated pill or historical Pro text', async t => {
+  const { page } = await fixture(t, '<article><button>Pro</button></article><form><textarea id="composer"></textarea><button class="__composer-pill">Upload</button></form>');
+  const reader = new ChatGPTBrowser();
+  reader.page = async () => page; reader.composer = async () => page.locator('#composer');
+  await page.evaluate(() => setTimeout(() => {
+    const button = document.createElement('button'); button.id = 'tier'; button.textContent = 'Pro'; document.querySelector('form').append(button);
+  }, 200));
+  assert.equal(await (await reader.advancedControlButton()).getAttribute('id'), 'tier');
+  await page.locator('#tier').evaluate(e => e.remove());
+  assert.equal(await reader.advancedControlButton(), null);
+});

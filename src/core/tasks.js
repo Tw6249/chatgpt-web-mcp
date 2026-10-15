@@ -66,10 +66,10 @@ export class TaskKernel {
     if (!/^[a-z][a-z0-9_-]*:[0-9a-f-]{36}$/.test(taskId)) throw new WebUIError('INVALID_TASK', 'Invalid task_id.');
     const id = taskId.split(':')[0]; this.provider(id); return id;
   }
-  async locked(id, fn, signal) {
+  async locked(id, fn, signal, deadline) {
     this.provider(id);
     const file = path.join(this.directory, id, 'tasks.json');
-    const release = await acquireLock(`${file}.lock`, { signal, timeout: 180000 });
+    const release = await acquireLock(`${file}.lock`, { signal, timeout: deadline ? Math.max(1, deadline - Date.now()) : 180000 });
     try {
       const raw = await readState(file);
       const state = validateJournal(raw, id);
@@ -205,7 +205,7 @@ export class TaskKernel {
     }, signal);
   }
 
-  async read(taskId, { signal, cancel = false, refresh = false, conversation_url } = {}) {
+  async read(taskId, { signal, cancel = false, refresh = false, conversation_url, deadline } = {}) {
     const id = this.taskProvider(taskId);
     return this.locked(id, async (state, save) => {
       const task = state.tasks[taskId];
@@ -234,6 +234,7 @@ export class TaskKernel {
           const root = adapter.isRoot(expected) || adapter.isProvisional?.(expected);
           if (!root && adapter.restore && (task.session_id || conversation_url || revalidate)) await adapter.restore(expected);
           const observed = await adapter.inspect();
+          signal?.throwIfAborted();
           const url = canonicalURL(observed.url);
           if (url !== expected && !root) throw new WebUIError('CONVERSATION_CHANGED', 'Open the task conversation before resuming it.');
           const acknowledged = observed.userCount === task.baseline.userCount + 1 && textHash(observed.lastUser) === task.promptHash;
@@ -264,20 +265,36 @@ export class TaskKernel {
         task.error = { code: error.code || (signal?.aborted ? 'INTERRUPTED' : 'PROVIDER_ERROR'), message: error.message.split('\n')[0] };
       }
       task.updated_at = Date.now(); await save(); return taskView(task);
-    }, signal);
+    }, signal, deadline);
   }
   async result(taskId, { wait = false, timeoutMs = 30000, signal, refresh = false, conversation_url } = {}) {
     if (!Number.isFinite(timeoutMs) || timeoutMs < 1000 || timeoutMs > 300000) throw new WebUIError('INVALID_TIMEOUT', 'timeoutMs must be between 1000 and 300000.');
     const deadline = Date.now() + timeoutMs;
-    while (true) {
+    const budget = new AbortController();
+    const timer = setTimeout(() => budget.abort(Object.assign(new Error('Result observation timed out; read the same task again.'), { code: 'RESULT_TIMEOUT' })), timeoutMs);
+    const observationSignal = signal ? AbortSignal.any([signal, budget.signal]) : budget.signal;
+    let latest;
+    try {
+      while (true) {
+        observationSignal.throwIfAborted();
+        latest = await this.read(taskId, { signal: observationSignal, refresh, conversation_url, deadline });
+        refresh = false;
+        if (!wait || terminal.has(latest.state) || latest.state === 'uncertain' || Date.now() >= deadline) return { ...latest, timed_out: !terminal.has(latest.state) && Date.now() >= deadline };
+        // Release provider locks between observations; cancellation/status
+        // remain available. No worker resends or races a whole send workflow.
+        await delay(Math.min(1000, Math.max(1, deadline - Date.now())), undefined, { signal: observationSignal });
+      }
+    } catch (error) {
       signal?.throwIfAborted();
-      const task = await this.read(taskId, { signal, refresh, conversation_url });
-      refresh = false;
-      if (!wait || terminal.has(task.state) || task.state === 'uncertain' || Date.now() >= deadline) return { ...task, timed_out: wait && !terminal.has(task.state) && Date.now() >= deadline };
-      // Release provider locks between observations so cancellation and status
-      // from another process remain available. No background worker resends.
-      await delay(Math.min(1000, Math.max(1, deadline - Date.now())), undefined, { signal });
-    }
+      if (!budget.signal.aborted && !(error.code === 'BUSY' && Date.now() >= deadline)) throw error;
+      // A busy journal belongs to another operation. Atomic state writes make
+      // this read-only fallback safe; never modify or reclaim its live lock.
+      const id = this.taskProvider(taskId);
+      const raw = validateJournal(await readState(path.join(this.directory, id, 'tasks.json')), id);
+      const task = raw.tasks[taskId];
+      if (!task) throw new WebUIError('TASK_NOT_FOUND', 'Task not found.');
+      return { ...taskView(task), timed_out: !terminal.has(task.state) };
+    } finally { clearTimeout(timer); }
   }
   async abandon(taskId, { confirm = false, signal } = {}) {
     if (confirm !== true) throw new WebUIError('CONFIRM_REQUIRED', 'Explicit confirmation is required to abandon tracking; this cannot undo a send.');
