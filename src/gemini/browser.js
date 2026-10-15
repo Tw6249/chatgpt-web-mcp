@@ -1,3 +1,4 @@
+import { controlRequest } from '../shared/control.js';
 import fs from "node:fs/promises";
 import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
@@ -40,7 +41,7 @@ export class GeminiBrowser {
     const execute = async () => {
       const release = await acquireLock(this.config.operationLock, { signal, timeout: this.config.actionTimeout });
       this.signal = signal;
-      const onAbort = () => { void this.runtime.disconnect(); };
+      const onAbort = () => { void this.runtime.disconnect().catch(() => {}); };
       signal?.addEventListener("abort", onAbort, { once: true });
       try { signal?.throwIfAborted(); return await operation(); }
       finally {
@@ -54,7 +55,10 @@ export class GeminiBrowser {
     return run;
   }
 
-  async close() { await this.runtime.disconnect(); this.currentPage = null; }
+  async close() { this.currentPage = null; await this.runtime.disconnect(); }
+  async controlRead(request, { timeout = this.config.actionTimeout } = {}) {
+    return controlRequest(request, { timeout, signal: this.signal, onInterrupt: () => this.close() });
+  }
   async state() { return sessionView(await readState(this.config.runtimeState), this.sessionId, SESSION_FIELDS); }
   async update(fields) {
     const raw = await readState(this.config.runtimeState);
@@ -69,6 +73,7 @@ export class GeminiBrowser {
     const context = await this.runtime.connect(this.signal);
     const state = await this.state();
     const page = await sessionPage(context, {
+      signal: this.signal, timeout: this.config.actionTimeout,
       sessionId: this.sessionId, bindings: state.sessionTabs, url: this.config.url,
       persist: (sessionTabs) => this.update({ sessionTabs }),
       beforeCreate: async () => {
@@ -116,7 +121,7 @@ export class GeminiBrowser {
 
   async snapshot() {
     const page = await this.page();
-    const data = await page.evaluate((s) => {
+    const data = await this.controlRead(page.evaluate((s) => {
       const visible = (e) => !!(e && e.getClientRects().length && getComputedStyle(e).visibility !== "hidden");
       const first = (selectors) => selectors.flatMap((s) => [...document.querySelectorAll(s)]).find(visible);
       const users = [...document.querySelectorAll(s.user)].filter(visible);
@@ -141,7 +146,7 @@ export class GeminiBrowser {
         attachments: [...document.querySelectorAll(s.attachments)].filter((e) => visible(e) && !e.closest('user-query, model-response') && !e.parentElement?.closest(s.attachments)).map((e) => e.innerText),
         model: first(s.model)?.innerText?.replace(/\s+/g, ' ').trim() || null,
       };
-    }, SELECTORS);
+    }, SELECTORS));
     return data;
   }
 
@@ -295,11 +300,12 @@ export class GeminiBrowser {
       if (s.alerts && !isRateLimit(s.alerts)) throw new WebUIError("PAGE_ERROR", "Gemini displays an error. Inspect the page; the send remains pending to prevent duplicates.");
       // Wake on DOM mutation; bounded idle timeout also confirms stable completion.
       const page = await this.page();
-      await page.evaluate(() => new Promise((resolve) => {
+      const idleMs = Math.max(1, Math.min(1000, deadline - Date.now()));
+      await this.controlRead(page.evaluate(timeout => new Promise((resolve) => {
         let timer; const finish = () => { observer.disconnect(); clearTimeout(timer); resolve(); };
         const observer = new MutationObserver(finish); observer.observe(document.body, { subtree: true, childList: true, characterData: true, attributes: true });
-        timer = setTimeout(finish, 1000);
-      }));
+        timer = setTimeout(finish, timeout);
+      }), idleMs), { timeout: idleMs + 1000 });
     }
     const s = await this.snapshot();
     const pending = (await this.state()).pending;

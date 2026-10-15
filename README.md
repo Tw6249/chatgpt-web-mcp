@@ -1,5 +1,15 @@
 # ChatGPT & Gemini Web MCP
 
+## 浏览器稳定性修复（0.7.11）
+
+- ChatGPT 与 Gemini 共用有界的本机端点探测、CDP 连接和断开流程；超时只断开控制器，保留浏览器、草稿及待恢复任务。存活但失联的专用浏览器不会触发同一配置目录的重复启动。
+- `chat_result.timeoutMs` 同时约束任务锁排队和结果观察，并允许最多约 5 秒控制连接清理时间。超时后继续读取同一个任务，不自动重发。清理尚未完成时返回 `CONTROL_BUSY`；若持续出现，重连 MCP 后读取原任务。
+- ChatGPT 档位控件等待页面挂载，并核验输入框附近的中英文标签；不再凭全局 pill 类名猜测按钮。
+- 每个平台的 `browser-state.json` 同目录新增 `browser-diagnostics.jsonl`，记录连接耗时、控制器断连、页面崩溃及托管进程退出。日志超过 512 KiB 后保留一个 `.1` 轮转文件，不记录 URL、会话标识、网页正文或原始错误内容。`controller_disconnected` 且 `expected:true` 表示正常断开控制器，不代表 Chrome 闪退；进程退出本身也不能单独证明原生崩溃。
+
+已有未完成任务时，使用 `node src/cli.js upgrade --preserve-tasks` 更新，完成后重连 MCP。升级不清除任务记录或登录配置。修复已通过离线浏览器回归；历史窗口消失未复现，不能宣称已确认其原生崩溃原因。
+
+
 通过 MCP 统一连接 ChatGPT 和 Gemini 网页端，支持同题多模型问答、持久化任务、重启恢复与本地状态管理。各平台使用独立的浏览器登录环境，无需配置 API Key。
 
 [English](README.en.md)

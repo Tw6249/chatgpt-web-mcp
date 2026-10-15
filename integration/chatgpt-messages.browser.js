@@ -146,7 +146,7 @@ async function fixture(t, body = '') {
   const page = await context.newPage();
   await page.setContent(html(body));
   // Call the production DOM methods with only their page boundary mocked.
-  const reader = { page: async () => page, userLocator: () => page.locator(userSelector) };
+  const reader = { controlRead: ChatGPTBrowser.prototype.controlRead, signal: () => undefined, close: async () => {}, page: async () => page, userLocator: () => page.locator(userSelector) };
   return {
     page, reader,
     messages: () => ChatGPTBrowser.prototype.renderedConversationMessages.call(reader),

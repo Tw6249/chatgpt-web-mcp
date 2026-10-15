@@ -1,12 +1,10 @@
+import { answerTierControlDOM } from './shared/composer-controls.js';
 import fs from "node:fs/promises";
-import { spawn } from "node:child_process";
-import net from "node:net";
 import path from "node:path";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { sessionPage, sessionView, mergeSessionView, validateSessionId } from './shared/sessions.js';
-import { WebUIError } from './shared/persistent-browser.js';
-
-import { chromium } from "playwright-core";
+import { WebUIError, PersistentBrowser, acquireLock } from './shared/persistent-browser.js';
+import { controlRequest } from './shared/control.js';
 
 import {
   ACTION_TIMEOUT_MS,
@@ -462,33 +460,6 @@ async function waitWithAbort(ms, signal) {
   });
 }
 
-async function raceWithAbort(promise, signal, onAbort) {
-  throwIfAborted(signal);
-  if (!signal) return promise;
-  return new Promise((resolve, reject) => {
-    let settled = false;
-    const finish = (callback, value) => {
-      if (settled) return;
-      settled = true;
-      signal.removeEventListener("abort", handleAbort);
-      callback(value);
-    };
-    const handleAbort = () => {
-      if (settled) return;
-      settled = true;
-      signal.removeEventListener("abort", handleAbort);
-      Promise.resolve(onAbort?.())
-        .catch(() => {})
-        .finally(() => reject(abortReason(signal)));
-    };
-    signal.addEventListener("abort", handleAbort, { once: true });
-    Promise.resolve(promise).then(
-      (value) => finish(resolve, value),
-      (error) => finish(reject, error),
-    );
-  });
-}
-
 function uniqueBy(items, key) {
   const seen = new Set();
   return items.filter((item) => {
@@ -563,53 +534,9 @@ function absoluteChatUrl(href) {
   return new URL(href, CHATGPT_URL).toString();
 }
 
-async function freeLoopbackPort() {
-  const server = net.createServer();
-  await new Promise((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(0, "127.0.0.1", resolve);
-  });
-  const address = server.address();
-  const port = typeof address === "object" && address ? address.port : null;
-  await new Promise((resolve) => server.close(resolve));
-  if (!port) throw new Error("无法分配本机调试端口。");
-  return port;
-}
-
-async function waitForChromeEndpoint(port, process, stderrLines) {
-  const endpoint = `http://127.0.0.1:${port}`;
-  const deadline = Date.now() + ACTION_TIMEOUT_MS;
-  while (Date.now() < deadline) {
-    if (process.exitCode != null) {
-      throw new Error(
-        `Chrome 在控制通道就绪前退出（${process.exitCode}）：${stderrLines.join("").slice(-1200)}`,
-      );
-    }
-    try {
-      const response = await fetch(`${endpoint}/json/version`);
-      if (response.ok) return endpoint;
-    } catch {
-      // Chrome is still starting.
-    }
-    await new Promise((resolve) => setTimeout(resolve, 150));
-  }
-  throw new Error(`等待 Chrome 本机控制通道超时：${endpoint}`);
-}
-
 async function navigate(page, url, options, signal) {
   await waitForPageInteraction("navigate", signal);
   return page.goto(url, options);
-}
-
-async function chromeEndpoint(port) {
-  if (!Number.isInteger(port) || port < 1 || port > 65_535) return null;
-  const endpoint = `http://127.0.0.1:${port}`;
-  try {
-    const response = await fetch(`${endpoint}/json/version`);
-    return response.ok ? endpoint : null;
-  } catch {
-    return null;
-  }
 }
 
 function browserSessionId(state) {
@@ -909,48 +836,7 @@ async function clearStaleActiveGeneration(runtime) {
 }
 
 async function acquireOperationLock(operation, signal) {
-  await fs.mkdir(path.dirname(OPERATION_LOCK_FILE), { recursive: true });
-  const deadline = Date.now() + ACTION_TIMEOUT_MS;
-  const token = `${process.pid}-${Date.now()}`;
-  while (Date.now() < deadline) {
-    throwIfAborted(signal);
-    let handle;
-    try {
-      handle = await fs.open(OPERATION_LOCK_FILE, "wx", 0o600);
-      await handle.writeFile(
-        `${JSON.stringify({ pid: process.pid, operation, startedAt: Date.now(), token })}\n`,
-      );
-      return async () => {
-        await handle.close().catch(() => {});
-        const current = await fs
-          .readFile(OPERATION_LOCK_FILE, "utf8")
-          .then((value) => JSON.parse(value))
-          .catch(() => null);
-        if (current?.token === token) await fs.unlink(OPERATION_LOCK_FILE).catch(() => {});
-      };
-    } catch (error) {
-      await handle?.close().catch(() => {});
-      if (error?.code !== "EEXIST") throw error;
-      const owner = await fs
-        .readFile(OPERATION_LOCK_FILE, "utf8")
-        .then((value) => JSON.parse(value))
-        .catch(() => null);
-      if (!processIsAlive(Number(owner?.pid))) {
-        await fs.unlink(OPERATION_LOCK_FILE).catch(() => {});
-        continue;
-      }
-      await waitWithAbort(100, signal);
-    }
-  }
-  const owner = await fs
-    .readFile(OPERATION_LOCK_FILE, "utf8")
-    .then((value) => JSON.parse(value))
-    .catch(() => null);
-  throw new ChatGPTWebError("另一个 ChatGPT MCP 操作仍在进行，已拒绝并发控制网页。", {
-    requestedOperation: operation,
-    activeOperation: owner?.operation || null,
-    activeSince: owner?.startedAt || null,
-  });
+  return acquireLock(OPERATION_LOCK_FILE, { signal, timeout: ACTION_TIMEOUT_MS });
 }
 
 export function rankTextMatch(items, query, getText = (item) => item) {
@@ -979,8 +865,11 @@ export function parseAdvancedRowValue(text, labels) {
 
 export class ChatGPTBrowser {
   constructor({ sessionId } = {}) { this.sessionId = validateSessionId(sessionId); }
-  #browser = null;
-  #chromeProcess = null;
+  #runtime = new PersistentBrowser({
+    browserState: BROWSER_STATE_FILE, profile: USER_DATA_DIR,
+    executable: CHROME_EXECUTABLE, url: CHATGPT_URL, headless: HEADLESS,
+    actionTimeout: ACTION_TIMEOUT_MS, launchArgs: ['--start-maximized', '--new-window'],
+  });
   #context = null;
   #page = null;
   #queue = Promise.resolve();
@@ -1035,31 +924,17 @@ export class ChatGPTBrowser {
   }
 
   async close({ terminateBrowser = false } = {}) {
-    const chromeProcess = this.#chromeProcess;
-    if (this.#browser) {
-      await this.#browser.close().catch(() => {});
-    }
-    if (terminateBrowser) {
-      const state = await readBrowserState();
-      const pid = chromeProcess?.pid || state?.pid;
-      if (chromeProcess && chromeProcess.exitCode == null) chromeProcess.kill("SIGTERM");
-      else if (Number.isInteger(pid)) {
-        try {
-          process.kill(pid, "SIGTERM");
-        } catch {
-          // The persistent browser may already be gone.
-        }
-      }
-      await new Promise((resolve) => setTimeout(resolve, 300));
-      await fs.unlink(BROWSER_STATE_FILE).catch(() => {});
-    }
-    this.#browser = null;
-    this.#chromeProcess = null;
     this.#context = null;
     this.#page = null;
     this.#signedInUntil = 0;
     this.#settingsCache = null;
     this.#answerTier = null;
+    if (terminateBrowser) return this.#runtime.terminate();
+    return this.#runtime.disconnect();
+  }
+
+  async controlRead(request, { timeout = ACTION_TIMEOUT_MS } = {}) {
+    return controlRequest(request, { timeout, signal: this.signal(), onInterrupt: () => this.close() });
   }
 
   async runExclusive(operation, { signal, name = "tool-call" } = {}) {
@@ -1067,14 +942,17 @@ export class ChatGPTBrowser {
       throwIfAborted(signal);
       const release = await acquireOperationLock(name, signal);
       this.#requestSignal = signal || null;
+      const onAbort = () => { void this.close().catch(() => {}); };
+      signal?.addEventListener('abort', onAbort, { once: true });
       try {
-        return await raceWithAbort(operation(), signal, () => this.close());
+        throwIfAborted(signal);
+        // Await the workflow itself. Releasing its lock while it still runs
+        // could allow a late send or journal write after cancellation.
+        return await operation();
       } finally {
-        this.#requestSignal = null;
-        // Only disconnect the local CDP controller. The dedicated Chrome
-        // process and its ChatGPT tabs remain open for the next call.
-        await this.close();
-        await release();
+        signal?.removeEventListener('abort', onAbort);
+        try { await this.close(); }
+        finally { this.#requestSignal = null; await release(); }
       }
     };
     const scoped = () => sessionContext.run(this.sessionId, execute);
@@ -1318,94 +1196,33 @@ export class ChatGPTBrowser {
   }
 
   async launch() {
-    if (this.#context && this.#page && !this.#page.isClosed()) {
+    if (this.#runtime.browser?.isConnected() && this.#context && this.#page && !this.#page.isClosed()) {
       return this.#page;
     }
 
-    await fs.mkdir(USER_DATA_DIR, { recursive: true });
-
-    if (!CHROME_EXECUTABLE) {
-      throw new ChatGPTWebError(
-        "没有检测到 Chrome、Chromium 或 Edge。请安装浏览器，或设置 CHATGPT_WEB_CHROME。",
-        { platform: process.platform, environmentVariable: "CHATGPT_WEB_CHROME" },
-      );
-    }
-
+    throwIfAborted(this.signal());
     let openedChatGPTPage = false;
     try {
       const prior = await readBrowserState();
-      const priorEndpoint = await chromeEndpoint(Number(prior?.port));
-      if (priorEndpoint) {
-        this.#browser = await chromium.connectOverCDP(priorEndpoint);
-        this.#context = this.#browser.contexts()[0];
-        if (!this.#context) throw new Error("常驻 Chrome 没有返回默认浏览器上下文。");
+      if (!processIsAlive(Number(prior?.pid))) {
+        if (prior?.lastFailureAt) {
+          const remaining = RECONNECT_DELAY_MS - (Date.now() - Number(prior.lastFailureAt));
+          if (remaining > 0) await waitWithAbort(remaining, this.signal());
+        }
+        await this.siteAction('launch-chatgpt');
       }
-
-      if (!this.#context && prior?.lastFailureAt) {
-        const remaining = RECONNECT_DELAY_MS - (Date.now() - Number(prior.lastFailureAt));
-        if (remaining > 0) await new Promise((resolve) => setTimeout(resolve, remaining));
-      }
-
-      if (!this.#context) {
-        await this.siteAction("launch-chatgpt");
-        const port = await freeLoopbackPort();
-        const stderrLines = [];
-        const args = [
-          `--user-data-dir=${USER_DATA_DIR}`,
-          "--profile-directory=Default",
-          `--remote-debugging-port=${port}`,
-          "--remote-debugging-address=127.0.0.1",
-          "--no-first-run",
-          "--no-default-browser-check",
-          "--disable-background-mode",
-          "--start-maximized",
-          "--new-window",
-        ];
-        if (HEADLESS) args.push("--headless=new");
-        args.push(CHATGPT_URL);
-
-        this.#chromeProcess = spawn(CHROME_EXECUTABLE, args, {
-          detached: true,
-          stdio: ["ignore", "ignore", "ignore"],
-        });
-        this.#chromeProcess.unref();
-        openedChatGPTPage = true;
-
-        const endpoint = await waitForChromeEndpoint(port, this.#chromeProcess, stderrLines);
-        this.#browser = await chromium.connectOverCDP(endpoint);
-        this.#context = this.#browser.contexts()[0];
-        if (!this.#context) throw new Error("Chrome 没有返回默认浏览器上下文。");
-        await writeBrowserState({
-          port,
-          pid: this.#chromeProcess.pid,
-          startedAt: Date.now(),
-          profile: USER_DATA_DIR,
-        });
-        await updateRuntimeState({ authenticatedUntil: 0 });
-      }
+      this.#context = await this.#runtime.connect(this.signal());
+      openedChatGPTPage = this.#runtime.launched;
+      if (openedChatGPTPage) await updateRuntimeState({ authenticatedUntil: 0 });
     } catch (error) {
-      await writeBrowserState({
-        ...(await readBrowserState()),
-        lastFailureAt: Date.now(),
-        profile: USER_DATA_DIR,
-      }).catch(() => {});
-      const message = error instanceof Error ? error.message : String(error);
-      if (/SingletonLock|profile.*in use|ProcessSingleton|already running/i.test(message)) {
-        throw new ChatGPTWebError(
-          "ChatGPT MCP 的专用浏览器配置正在被另一个进程使用。请关闭登录窗口或另一个 MCP 实例后重试。",
-          { profile: USER_DATA_DIR },
-        );
-      }
-      throw new ChatGPTWebError("无法启动 ChatGPT MCP 的专用浏览器。", {
-        cause: message,
-        chrome: CHROME_EXECUTABLE,
-        profile: USER_DATA_DIR,
-      });
+      await writeBrowserState({ ...(await readBrowserState()), lastFailureAt: Date.now() }).catch(() => {});
+      throw error;
     }
 
     this.#context.setDefaultTimeout(ACTION_TIMEOUT_MS);
     const runtime = await readRuntimeState();
     this.#page = await sessionPage(this.#context, {
+      signal: this.signal(), timeout: ACTION_TIMEOUT_MS,
       sessionId: this.sessionId, bindings: runtime.sessionTabs, url: CHATGPT_URL,
       persist: (sessionTabs) => updateRuntimeState({ sessionTabs }),
       beforeCreate: () => this.siteAction('open-chatgpt'),
@@ -1512,6 +1329,7 @@ export class ChatGPTBrowser {
   }
 
   async page() {
+    throwIfAborted(this.signal());
     // launch() resolves this session's persisted CDP target (or an unowned
     // legacy target). Selecting the first provider tab here defeats that
     // binding and can send, navigate or read another session's conversation.
@@ -2236,63 +2054,18 @@ export class ChatGPTBrowser {
   async advancedControlButton() {
     const page = await this.page();
     const composer = await this.composer();
-    const composerBox = await composer?.boundingBox();
-    if (!composerBox) return null;
-
-    // This class is on the answer-tier pill itself in the current ChatGPT UI.
-    // It is unique to the composer and therefore safer than inferring a parent
-    // <main> when temporary-chat layouts render multiple main regions.
-    const semanticTierButton = page.locator("button.__composer-pill:visible").last();
-    if (await semanticTierButton.isVisible({ timeout: 3_000 }).catch(() => false)) {
-      return semanticTierButton;
-    }
-
-    // The current ChatGPT UI no longer consistently exposes aria-haspopup on
-    // the answer-tier button (for example, the visible button may only say
-    // “极高”). Use its position beside the composer plus semantic exclusions.
-    // Resolve the exact <main> that owns this composer. ChatGPT can render
-    // another <main> earlier in the DOM, so page.locator("main").first()
-    // can silently search the wrong subtree.
-    const composerMain = composer.locator("xpath=ancestor::main[1]");
-    const scope = (await composerMain.count()) > 0 ? composerMain : page.locator("main").last();
-    const candidates = scope.locator("button:visible, [role='button']:visible");
-    const count = await candidates.count();
-    let best = null;
-    for (let index = 0; index < count; index += 1) {
-      const candidate = candidates.nth(index);
-      const text = (
-        (await candidate.innerText().catch(() => "")) ||
-        (await candidate.getAttribute("aria-label")) ||
-        (await candidate.getAttribute("title")) ||
-        ""
-      )
-        .replace(/\s+/g, " ")
-        .trim();
-      const box = await candidate.boundingBox();
-      if (!text || text.length > 40 || !box) continue;
-      if (
-        /聊天|工作|chat|work|语音|听写|voice|dictation|添加|文件|attach|upload|发送|停止|send|stop|麦克风|microphone/i.test(
-          text,
-        )
-      ) {
-        continue;
-      }
-
-      const centerY = box.y + box.height / 2;
-      const centerX = box.x + box.width / 2;
-      const composerCenterY = composerBox.y + composerBox.height / 2;
-      const distance = Math.abs(centerY - composerCenterY);
-      if (distance > Math.max(90, composerBox.height * 2)) continue;
-      const answerTierBonus = /^(快速|标准|较高|高|极高|pro|fast|standard|high|very high)$/i.test(
-        text,
-      )
-        ? -100
-        : 0;
-      const horizontalDistance = Math.abs(centerX - (composerBox.x + composerBox.width));
-      const score = distance + horizontalDistance * 0.02 + answerTierBonus;
-      if (!best || score < best.score) best = { locator: candidate, score };
-    }
-    return best?.locator || null;
+    if (!composer) return null;
+    // Keep the exact element handle so a DOM reorder cannot turn a verified
+    // button index into a click on a different control.
+    const element = await composer.elementHandle();
+    if (!element) return null;
+    try {
+      const handle = await this.controlRead(page.waitForFunction(answerTierControlDOM, element, { timeout: 3000 }), { timeout: 4000 });
+      return handle.asElement();
+    } catch (error) {
+      if (error.name !== 'TimeoutError') throw error;
+      return null;
+    } finally { await element.dispose(); }
   }
 
   async answerTierSliderState(slider) {
@@ -3387,6 +3160,7 @@ export class ChatGPTBrowser {
     const endpoint = `${CHATGPT_URL.replace(/\/$/u, "")}/backend-api/conversations/${encodeURIComponent(conversationId)}?include_has_versions=true&num_turns=100`;
     const requestApi = () =>
       fetch(endpoint, {
+        signal: this.signal() ? AbortSignal.any([this.signal(), AbortSignal.timeout(ACTION_TIMEOUT_MS)]) : AbortSignal.timeout(ACTION_TIMEOUT_MS),
         headers: {
           ...this.#apiHeaders,
           accept: "application/json",
@@ -3602,11 +3376,11 @@ export class ChatGPTBrowser {
 
   async assistantIsStreaming(assistant) {
     if (!assistant) return false;
-    return assistant.evaluate((element) => {
+    return this.controlRead(assistant.evaluate((element) => {
       const scope = element.closest("[data-chatgpt-search-unit-key$=':assistant']") || element;
       const markers = "[data-is-streaming='true'], .result-streaming, [class*='loading-shimmer'], [data-testid*='thinking']";
       return scope.matches(markers) || Boolean(scope.querySelector(markers));
-    });
+    }));
   }
 
   async userMessageSnapshot() {
@@ -4033,11 +3807,11 @@ export class ChatGPTBrowser {
         timeout: unlimited ? null : timeoutMs,
       },
     );
-    const observed = await raceWithAbort(observerPromise, signal, () =>
-      page.evaluate(() => {
-        window.dispatchEvent(new Event("__chatgpt_mcp_cancel_wait__"));
-      }),
-    );
+    const observed = await this.controlRead(observerPromise, {
+      // Keep intentionally unlimited Pro generation waits unlimited. Finite
+      // waits also have a Node-side deadline if renderer timers stop running.
+      timeout: unlimited ? null : timeoutMs + 2000,
+    });
 
     if (observed.status === "rate-limited" || observed.status === "network-rate-limited") {
       const scope =
@@ -4571,8 +4345,8 @@ export class ChatGPTBrowser {
     if (rateLimit.limited) await this.tripCircuitBreaker(rateLimit.scope, "page-text-read");
     const assistant = this.assistantLocator();
     const user = this.userLocator();
-    const renderedAssistantCount = await assistant.count();
-    const renderedUserCount = await user.count();
+    const renderedAssistantCount = await this.controlRead(assistant.count());
+    const renderedUserCount = await this.controlRead(user.count());
     const runtime = await readRuntimeState();
     const stop = await this.firstVisible(SELECTORS.stopButton, { timeout: 100 });
     const lastAssistant = renderedAssistantCount ? assistant.last() : null;
@@ -4621,7 +4395,7 @@ export class ChatGPTBrowser {
     const latestUserText = transcript
       ? transcript.messages.findLast((message) => message.author === "user")?.text.trim() || null
       : renderedUserCount
-        ? (await user.last().evaluate(readUserMessageDOMText)).trim()
+        ? (await this.controlRead(user.last().evaluate(readUserMessageDOMText))).trim()
         : null;
     const latestAssistantText = transcript
       ? transcript.messages.findLast((message) => message.author === "assistant")?.text.trim() || null
